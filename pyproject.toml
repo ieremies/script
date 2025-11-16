@@ -1,0 +1,12 @@
+[project]
+name = "xp2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.12.4",
+    "rich>=14.2.0",
+    "toml>=0.10.2",
+    "typer>=0.20.0",
+]

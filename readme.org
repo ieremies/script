@@ -1,0 +1,159 @@
+#+title: XP
+#+subtitle: script to run eXPeriments
+
+1.  *Run* :: Executa os experimentos com base em um arquivo de configuração central.
+2.  *Parse* :: Extrai dados dos logs brutos e os compila em um =.csv= estruturado.
+3.  *Plot* :: Gera gráficos a partir dos arquivos =.csv= resultantes.
+
+-----
+
+* O Arquivo de Configuração (ex: =experimento.toml=)
+Quase toda a lógica de execução é definida em um arquivo de configuração no formato TOML. Isso substitui a necessidade de muitos argumentos de linha de comando e serve como documentação para o seu experimento.
+
+#+begin_src toml
+# O 'projeto' ou 'código' a ser executado
+[project]
+# Pode ser um link do GitHub (gh:) ou um caminho local
+location = "gh:ieremies/meu-projeto-de-otimizacao"
+# ou: location = "/caminhos/locais/meu-projeto"
+# Parser de logs da instância.
+parser = "~/meu-projeto/parser.py"
+
+# As 'instâncias' a serem usadas
+[instances]
+location = "gh:ieremies/instances"
+# ou: location = "../minhas-instancias"
+# Lista de classes de instância a serem executadas
+# 'xp' irá procurar por 'easy' e 'hard' em 'location'
+classes = ["easy", "hard"]
+
+# Cada 'build' é um 'ambiente' ou 'executável' que queremos testar.
+# Podemos ter múltiplos blocos [[build]].
+[[build]]
+name = "release-cplex"
+type = "cpp" # Ajuda a 'xp' a saber como construir
+# Comando para construir este build
+build_command = "make -j -k release-cplex"
+# Onde encontrar o executável após o 'build_command'
+executable = "build/release-cplex.e"
+# O template de comando para executar.
+# {executable} e {instance_path} são substituídos por 'xp'.
+run_template = "./{executable} {instance_path} --time 3600 --seed 42"
+
+[[build]]
+name = "debug-solver"
+type = "cpp"
+build_command = "cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build/debug -- -j -k my-solver"
+executable = "build/debug/my-solver"
+run_template = "./{executable} {instance_path} --verbose"
+
+[[build]]
+name = "python-heuristic"
+type = "python"
+# Para python, 'build' pode ser instalar dependências
+build_command = "pip install -r requirements.txt"
+# O 'executável' é o script principal
+executable = "main.py"
+# O template de execução usa o interpretador
+run_template = "python {executable} --file {instance_path}"
+#+end_src
+
+-----
+
+* Comandos
+** Run
+O comando =run= é o principal executor. Ele lê o arquivo de configuração, constrói os ambientes, encontra as instâncias e executa cada combinação, gerenciando os logs e o paralelismo. *Atenção:* é assumido que seu projeto executa sem paralelismo (/single-threaded/).
+
+~xp run [arquivo.toml] [opções]~
+
+*** Opções:
+- =--tag [run_id]= (ou =-t=) :: Define um "ID de Execução" (Run ID) para esta rodada. Isso é *crucial* para a organização e retomada (resumability). Se não for fornecido, um =datetime= pode ser usado.
+- =--jobs N= (ou =-jN=) :: Executa até =N= trabalhos (instância+build) em paralelo.
+
+*** Lógica de Execução:
+
+1. *Leitura:* O =xp= lê o =arquivo.toml=.
+2. *Setup (Cloner & Builder):*
+   - Baixa (clona) o =location= do =[project]=, se necessário.
+   - Para cada =[[build]]= definido, ele executa o =build_command= dentro do diretório do projeto.
+3. *Setup (Instancer):*
+   - Baixa (clona, se necessário) o =location= das =[instances]=.
+   - Resolve todas as classes de instância. A lógica é a mesma de antes:
+     - Se =[instance_class]= for um diretório, as instâncias são os arquivos dentro dele.
+     - Se =[instance_class]= for um arquivo de texto, cada linha é o nome de uma instância a ser procurada (no mesmo =path= ou em =path/all= das instâncias).
+   - A ordem das classes segue a lista, mas as instâncias *dentro* de cada classe são embaralhadas (/shuffle/) para melhor distribuição estatística durante a execução.
+4. *Execução (com Resumability):*
+   - O =xp= itera sobre cada =build= e cada =instance_path=.
+   - Antes de executar, ele verifica se o log de resultado já existe.
+   - O destino é determinado pelo =run_id= (da flag =--tag=), ou o =[datetime]= (dia e hora) que o comando =run= foi invocado.
+   - *Caminho do Log:* =logs/[run_id]/[build_name]/[instance_name]/=
+   - Se =logs/v1.2/release/inst01/meta.json= existir, o =xp= *pulará* esta execução, a menos que: =--overwrite= seja usado, ou se o =exit_code= for diferente de zero.
+5. *Coleta de Metadados:*
+   - Durante a execução, =xp= *não* redireciona apenas o =stdout=, mas também captura um conjunto de metadados. Para cada execução, ele cria o diretório =logs/[run_id]/[build_name]/[instance_name]/= e salva:
+     - =stdout.log= :: A saída padrão (o que seu programa imprime).
+     - =stderr.log= :: A saída de erro (para depuração).
+     - =meta.json= :: Um arquivo JSON com metadados sobre a execução.
+
+
+Aqui está um exemplo das informações que salvaremos no =meta.json=.
+#+begin_src json
+{
+  "run_id": "v1.2",
+  "build_name": "release-cplex",
+  "instance_name": "inst01",
+  "instance_path": "/abs/path/to/instances/easy/inst01.dat",
+  "command": "./build/release-cplex.e /abs/path/to/instances/easy/inst01.dat --time 3600",
+  "wall_time_seconds": 123.45,
+  "exit_code": 0
+}
+#+end_src
+
+# TODO: Se --tag não for fornecida e o projeto for um repo git, usar a tag/hash do commit atual como [run_id]
+
+- Caso o código de retorno da execução seja diferente de zero, será impresso as últimas 5 linhas do arquivo =stderr.log=
+- Se um parser for indicado, ele também será chamado após a finalização de cada instância.
+
+** Parser
+O =parse= processa um diretório de logs brutos (criado pelo =run=) e o converte em um único arquivo =.csv=.
+
+~xp parse [path/to/logs/dir] [path/to/parser.py]~
+
+Exemplo:
+~xp parse logs/25-12-08-20-30-14/primal parser.py~
+
+Isso irá gerar o arquivo =logs/25-12-08-20-30-14-primal.csv=.
+
+O arquivo =parser.py= define como extrair dados de cada log.
+Ele será chamado com =python3 parser.py [path/to/instance/]=, onde =[path/to/instance/]= é o caminho para a pasta de uma instância, contendo os arquivos acima citados.
+Ao final, =parser.py= deve escrever um arquivo chamado =res.csv= contendo as informações que você gostaria de salvar para cada instância.
+
+Exemplo de script =parser.py=:
+#+begin_src python
+#+end_src
+
+O =xp parse= irá:
+1.  Encontrar todos os diretórios de log (ex: =.../inst01/=, =.../inst02/=).
+2.  Para cada diretório, invocar o script =parser.py=.
+3.  Juntar os arquivos =.../inst1/res.csv=, =...inst2/res.csv= em um único csv.
+   
+*** Checker
+É recomendado que o seu script =parser.py= também realize checagens se o seu resultado "faz sentido". Por exemplo, se o seus limitantes condizem com o ótimo conhecido da instância ou se a resposta dela possui alguma inconsistência.
+
+Por isso, é uma boa ideia escrever no arquivo =stderr.log= da instância qualquer mensagem de erro referente ao /parsing/ ou checagem da instância.
+Caso o script =parser.py= termine com código diferente de zero, será impressa as últimas 5 linhas do arquivo =stderr.log=.
+
+** Graph
+O =plot= (anteriormente =Graph=) usa os arquivos =.csv= gerados pelo =parse= para criar diferentes tipos de gráficos.
+
+~xp plot [tipo de plot] [csv files ...] [instance class]~
+
+Opções:
+
+  - =--black-and-white= :: bool, default=False
+  - =--output-format= :: [show, svg, jpeg, png, pdf], default=show
+
+Tipos de gráficos e colunas necessárias no CSV:
+
+  - =Accumulated Distribution= :: Requer =time= e =gap=.
+  - =Histogram= :: Compara apenas dois CSVs e requer =time= ou =gap=.
+  - =Performance Profile= :: Requer =time= e =gap=.
