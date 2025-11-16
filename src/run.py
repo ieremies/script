@@ -269,14 +269,14 @@ if __name__ == "__main__":
     ]
 
     # Example with extra parameters:
-    depth_values = [2, 3, 4, 5]
-    list_of_instances = [
-        RunInstance(
-            executable=executable_path, instance_path=inst_path, params={"depth": depth}
-        )
-        for inst_path in instance_paths
-        for depth in depth_values
-    ]
+    # depth_values = [2, 3, 4, 5]
+    # list_of_instances = [
+    #     RunInstance(
+    #         executable=executable_path, instance_path=inst_path, params={"depth": depth}
+    #     )
+    #     for inst_path in instance_paths
+    #     for depth in depth_values
+    # ]
 
     # Set parameters based on your comments
     build_name = Path(executable_path).stem
