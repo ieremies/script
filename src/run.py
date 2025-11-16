@@ -268,7 +268,7 @@ if __name__ == "__main__":
         for inst_path in instance_paths
     ]
 
-    # Example with extra parameters:
+    # Example with extra parameters: [sofia]
     # depth_values = [2, 3, 4, 5]
     # list_of_instances = [
     #     RunInstance(
@@ -295,6 +295,7 @@ if __name__ == "__main__":
             list_of_instances=list_of_instances,
             type=run_type,
             n_workers=n_workers,
+            # run_template="python3 {executable} -i {instance_path} --depth {depth}", #[sofia]
         )
     except Exception as e:
         out.error(f"Failed to initialize Runner: {e}")
