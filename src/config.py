@@ -17,8 +17,9 @@ class ProjectConfig(BaseModel):
 class InstanceConfig(BaseModel):
     """Configurações das [instances]"""
 
-    location: str
+    location: str | Path
     classes: List[str]
+    # {"class_name": [list, of, instance, paths]}
     instances: Optional[Dict[str, List[Path]]] = None
 
 

@@ -88,13 +88,14 @@ class RunInstance(BaseModel):
     }
     """
 
-    executable: str
-    instance_path: str
+    executable: Path
+    instance_path: Path
     params: Dict[str, Any] = Field(default_factory=dict)
 
     @property
     def name(self) -> str:
-        n = Path(self.instance_path).stem
+        n = self.executable.stem
+        n += self.instance_path.stem
         for k, v in self.params.items():
             n += f"_{k}_{v}"
         return n
@@ -103,7 +104,7 @@ class RunInstance(BaseModel):
 class Runner:
     name: str
     type: RunnerType
-    raw_logs_dir: str
+    raw_logs_dir: Path
     time_limit: int = 3600  # seconds
     list_of_instances: list[RunInstance]
     n_workers: int = 1
@@ -112,7 +113,7 @@ class Runner:
     def __init__(
         self,
         name: str,
-        raw_logs_dir: str,
+        raw_logs_dir: Path,
         list_of_instances: list[RunInstance],
         time_limit: int = 3600,
         type: RunnerType = RunnerType.CPP,
@@ -168,8 +169,8 @@ class Runner:
                     progress.update(task, advance=1)
 
     def _run_instance(self, run_instance: RunInstance) -> None:
-        inst_path = Path(run_instance.instance_path)
-        log_dir = Path(self.raw_logs_dir) / f"{self.name}/{run_instance.name}/"
+        inst_path = run_instance.instance_path
+        log_dir = self.raw_logs_dir / f"{self.name}/{run_instance.name}/"
 
         # if it exists, skip
         # TODO check in log_dir/meta.json if the exit code is 0, if not, re-run
@@ -186,6 +187,7 @@ class Runner:
             "instance_path": run_instance.instance_path,
         }
         format_params.update(run_instance.params)
+        # BUG quando o format falha, ele só não completa
         command = self.run_template.format(**format_params)
 
         try:
@@ -230,10 +232,10 @@ class Runner:
 
     def _print_info(self) -> None:
         info_panel = Panel(
-            f"[info]Number of Workers:[/info] {self.n_workers}\n"
+            f"[info]Workers:[/info] {self.n_workers}\n"
             f"[info]Time Limit:[/info] {self.time_limit}s\n"
-            f"[info]Raw Logs Directory:[/info] {self.raw_logs_dir}\n"
-            f"[info]Number of Instances to Run:[/info] {len(self.list_of_instances)}",
+            f"[info]Raw Logs:[/info] {self.raw_logs_dir}\n"
+            f"[info]# of Instances:[/info] {len(self.list_of_instances)}",
             title=f"[info]Runner {self.name} ({self.type})[/info]",
             title_align="left",
             subtitle="Sit back and wait...",
@@ -264,7 +266,7 @@ if __name__ == "__main__":
     # Create the list of RunInstance objects
     # Example without extra parameters:
     list_of_instances = [
-        RunInstance(executable=executable_path, instance_path=inst_path)
+        RunInstance(executable=Path(executable_path), instance_path=Path(inst_path))
         for inst_path in instance_paths
     ]
 
@@ -280,7 +282,7 @@ if __name__ == "__main__":
 
     # Set parameters based on your comments
     build_name = Path(executable_path).stem
-    raw_logs_dir = "./logs/raw/"
+    raw_logs_dir = Path("./logs/raw/")
     # number of physical cores
     n_workers = psutil.cpu_count(logical=False) or 1
     run_type = RunnerType.EXE

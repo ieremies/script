@@ -11,24 +11,28 @@ class MyConsole(Console):
     usando o método .log() do Rich.
     """
 
-    # 1. Adicionamos 'info' ao tema para o método .info()
-    theme = {"info": "cyan", "success": "green", "warning": "yellow", "error": "red"}
-
-    # 2. Instanciamos os consoles da classe com o tema
-    stdout = Console(theme=Theme(theme))
-    stderr = Console(stderr=True, theme=Theme(theme))
+    def __init__(self) -> None:
+        # 1. Adicionamos 'info' ao tema para o método .info()
+        theme = {
+            "info": "cyan",
+            "success": "green",
+            "warning": "yellow",
+            "error": "red",
+        }
+        super().__init__(theme=Theme(theme))
 
     def info(self, *args: Any) -> None:
-        self.stdout.log(*args, style="info")
+        self.print(*args, style="info")
 
     def success(self, *args: Any) -> None:
-        self.stdout.log(*args, style="success")
+        self.print(*args, style="success")
 
     def warning(self, *args: Any) -> None:
-        self.stderr.log(*args, style="warning")
+        self.print(*args, style="warning")
 
     def error(self, *args: Any) -> None:
-        self.stderr.log(*args, style="error")
+        # TODO print to stderr
+        self.print(*args, style="error", _stack_offset=2)
 
 
 out = MyConsole()

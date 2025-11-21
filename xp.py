@@ -1,3 +1,16 @@
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# dependencies = [
+#   "rich",
+#   "pydantic",
+#   "psutil",
+#   "typer",
+#   "gitpython",
+# ]
+# ///
+from pathlib import Path
+
 import typer
 from rich.traceback import install
 from typer import Argument as Arg
@@ -5,6 +18,8 @@ from typer import Option as Opt
 
 from src.config import load_config
 from src.console import out
+from src.run import RunInstance, Runner
+from src.utils import build_all, get_instances, get_project_root
 
 app = typer.Typer(help="XP CLI Application")
 
@@ -21,14 +36,44 @@ def run(
     # 2. Garante que a root do projeto existe (possivelmente clonando o repositório)
     get_project_root(config.project)
     # 3. Para cada build, executa o comando de build
-    build_all(config.build)
+    build_all(config.build, config.project)
     # 4. Garante que as instâncias existem (possivelmente clonando repositórios)
-    # e que garante que todas as instâncias da(s) classe(s) existem
+    # e garante que todas as instâncias da(s) classe(s) existem
     get_instances(config.instances)
     # 5. (opcional) Garante que o script de parser.py existe
-    get_parser_script(config.project)
+    # get_parser_script(config.project)
     # 7. Cria, se não existir, o diretório de resultados
-    ...
+
+    raw_logs_dir = Path("logs") / (config.project.id or "default_project") / "raw"
+
+    for build in config.build:
+        for inst_class in config.instances.classes:
+            out.rule(
+                f"Executando {build.name} para {len(config.instances.instances[inst_class])} instâncias da classe {inst_class}"
+            )
+
+            build_raw_logs_dir = raw_logs_dir / build.name
+            build_raw_logs_dir.mkdir(parents=True, exist_ok=True)
+
+            run_instances = [
+                RunInstance(
+                    executable=build.executable,
+                    instance_path=instance_path,
+                    # TODO especificar params adicionais do RunInstance
+                )
+                for instance_path in config.instances.instances[inst_class]
+            ]
+
+            Runner(
+                name=build.name,
+                type=build.type,  # possibly error, since this is str
+                raw_logs_dir=build_raw_logs_dir,
+                # TODO especificar o TL, talvez dentro da config do build
+                time_limit=10,
+                list_of_instances=run_instances,
+                n_workers=jobs,
+                run_template=build.run_template,
+            )
 
 
 @app.command()
