@@ -9,6 +9,7 @@
 #   "gitpython",
 # ]
 # ///
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -43,16 +44,16 @@ def run(
     # 5. (opcional) Garante que o script de parser.py existe
     # get_parser_script(config.project)
     # 7. Cria, se não existir, o diretório de resultados
+    out.rule()
 
-    raw_logs_dir = Path("logs") / (config.project.id or "default_project") / "raw"
+    # if tag is none, tag=datetime.now().strftime("%Y%m%d_%H%M%S")
+    tag = tag or datetime.now().strftime("%y%m%d_%H%M%S")
+
+    raw_logs_dir = Path("logs") / "raw"
 
     for build in config.build:
         for inst_class in config.instances.classes:
-            out.rule(
-                f"Executando {build.name} para {len(config.instances.instances[inst_class])} instâncias da classe {inst_class}"
-            )
-
-            build_raw_logs_dir = raw_logs_dir / build.name
+            build_raw_logs_dir = raw_logs_dir / tag / build.name
             build_raw_logs_dir.mkdir(parents=True, exist_ok=True)
 
             run_instances = [
@@ -73,6 +74,7 @@ def run(
                 list_of_instances=run_instances,
                 n_workers=jobs,
                 run_template=build.run_template,
+                class_name=inst_class,
             )
 
 

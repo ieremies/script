@@ -109,6 +109,7 @@ class Runner:
     list_of_instances: list[RunInstance]
     n_workers: int = 1
     run_template: str = "./{executable} {instance_path}"
+    class_name: str = None
 
     def __init__(
         self,
@@ -119,11 +120,13 @@ class Runner:
         type: RunnerType = RunnerType.CPP,
         n_workers: int = 1,
         run_template: str = "",
+        class_name: str = None,
     ):
         self.name = name
         self.type = type
         self.n_workers = n_workers
         self.time_limit = time_limit
+        self.class_name = class_name
 
         # TODO check if raw_logs_dir exists, if not, warn and create
         self.raw_logs_dir = raw_logs_dir
@@ -157,7 +160,7 @@ class Runner:
             console=out,
         ) as progress:
             total_tasks = len(self.list_of_instances)
-            task = progress.add_task(f"Running {self.name}", total=total_tasks)
+            task = progress.add_task("Running", total=total_tasks)
 
             with futures.ThreadPoolExecutor(max_workers=self.n_workers) as executor:
                 future_to_instance = {
@@ -170,7 +173,7 @@ class Runner:
 
     def _run_instance(self, run_instance: RunInstance) -> None:
         inst_path = run_instance.instance_path
-        log_dir = self.raw_logs_dir / f"{self.name}/{run_instance.name}/"
+        log_dir = self.raw_logs_dir / f"{run_instance.name}/"
 
         # if it exists, skip
         # TODO check in log_dir/meta.json if the exit code is 0, if not, re-run
@@ -211,6 +214,7 @@ class Runner:
 
         try:
             # Write meta.json
+            # BUG se ocorrer algum erro no meio do caminho, o meta.json fica mal formatado
             time = (
                 result.elapsed.total_seconds() if hasattr(result, "elapsed") else None
             )
@@ -232,11 +236,11 @@ class Runner:
 
     def _print_info(self) -> None:
         info_panel = Panel(
-            f"[info]Workers:[/info] {self.n_workers}\n"
-            f"[info]Time Limit:[/info] {self.time_limit}s\n"
-            f"[info]Raw Logs:[/info] {self.raw_logs_dir}\n"
-            f"[info]# of Instances:[/info] {len(self.list_of_instances)}",
-            title=f"[info]Runner {self.name} ({self.type})[/info]",
+            f"[info]{'Workers':<15}: {self.n_workers}\n"
+            f"[info]{'Time Limit':<15}: {self.time_limit}s\n"
+            f"[info]{'Raw Logs':<15}: {self.raw_logs_dir}\n"
+            f"[info]{'# of Instances':<15}: {len(self.list_of_instances)}",
+            title=f"[info]Running {self.name} × {self.class_name}[/info]",
             title_align="left",
             subtitle="Sit back and wait...",
             subtitle_align="right",
