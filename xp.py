@@ -7,6 +7,7 @@
 #   "psutil",
 #   "typer",
 #   "gitpython",
+#   "pandas",
 # ]
 # ///
 from datetime import datetime
@@ -19,6 +20,7 @@ from typer import Option as Opt
 
 from src.config import load_config
 from src.console import out
+from src.parse import get_parser_command, parse_and_gather
 from src.run import RunInstance, Runner
 from src.utils import build_all, get_instances, get_project_root
 
@@ -50,6 +52,8 @@ def run(
     tag = tag or datetime.now().strftime("%y%m%d_%H%M%S")
 
     raw_logs_dir = Path("logs") / "raw"
+    parser_script = Path(config.project.parser) if config.project.parser else None
+    parser_cmd = get_parser_command(parser_script) if parser_script else None
 
     for build in config.build:
         for inst_class in config.instances.classes:
@@ -67,7 +71,6 @@ def run(
 
             Runner(
                 name=build.name,
-                type=build.type,  # possibly error, since this is str
                 raw_logs_dir=build_raw_logs_dir,
                 # TODO especificar o TL, talvez dentro da config do build
                 time_limit=10,
@@ -75,6 +78,7 @@ def run(
                 n_workers=jobs,
                 run_template=build.run_template,
                 class_name=inst_class,
+                parser_cmd=parser_cmd,
             )
 
 
@@ -82,7 +86,11 @@ def run(
 def parse(
     input_dir: str = Arg(..., help="Caminho para o diretório de entrada."),
     parser_script: str = Arg(..., help="Caminho para o script do parser."),
-): ...
+):
+    raw_logs_dir = Path(input_dir)
+    parser_path = Path(parser_script)
+    parsed_logs_csv = raw_logs_dir / "parsed_results.csv"
+    parse_and_gather(raw_logs_dir, parser_path, parsed_logs_csv)
 
 
 @app.command()

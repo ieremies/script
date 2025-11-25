@@ -120,7 +120,7 @@ def get_instances(conf: InstanceConfig) -> None:
             instance_paths = []
             for line in class_path.read_text().splitlines():
                 inst_path = conf.location / line
-                all_path = conf.location / "all/" + line
+                all_path = conf.location / "all" / line
                 if inst_path.exists():
                     instance_paths.append(inst_path)
                 elif all_path.exists():

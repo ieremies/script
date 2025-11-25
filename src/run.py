@@ -46,8 +46,8 @@ O script agora formatará corretamente o comando como
 
 import json
 import subprocess
+import time
 from concurrent import futures
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict
 
@@ -62,17 +62,21 @@ from rich.progress import (
 )
 
 try:
-    from console import out
+    from src.console import out
 except ImportError:
     from rich.console import Console
 
     out = Console()
 
+try:
+    from src.parse import gather_results, parse_instance
+except ImportError:
 
-class RunnerType(str, Enum):
-    EXE = "exe"
-    CPP = "cpp"
-    PYTHON = "python"
+    def gather_results(raw_logs_dir: Path, parsed_logs_csv: Path) -> None:
+        pass
+
+    def parse_instance(parser_cmd: str, inst_path: Path) -> None:
+        pass
 
 
 class RunInstance(BaseModel):
@@ -94,8 +98,9 @@ class RunInstance(BaseModel):
 
     @property
     def name(self) -> str:
-        n = self.executable.stem
-        n += self.instance_path.stem
+        n = self.executable.name
+        n += "_" + self.instance_path.name
+
         for k, v in self.params.items():
             n += f"_{k}_{v}"
         return n
@@ -103,13 +108,13 @@ class RunInstance(BaseModel):
 
 class Runner:
     name: str
-    type: RunnerType
     raw_logs_dir: Path
     time_limit: int = 3600  # seconds
     list_of_instances: list[RunInstance]
     n_workers: int = 1
-    run_template: str = "./{executable} {instance_path}"
+    run_template: str = "{executable} {instance_path}"
     class_name: str = None
+    parser_cmd: str = None
 
     def __init__(
         self,
@@ -117,16 +122,16 @@ class Runner:
         raw_logs_dir: Path,
         list_of_instances: list[RunInstance],
         time_limit: int = 3600,
-        type: RunnerType = RunnerType.CPP,
         n_workers: int = 1,
         run_template: str = "",
         class_name: str = None,
+        parser_cmd: str = None,
     ):
         self.name = name
-        self.type = type
         self.n_workers = n_workers
         self.time_limit = time_limit
         self.class_name = class_name
+        self.parser_cmd = parser_cmd
 
         # TODO check if raw_logs_dir exists, if not, warn and create
         self.raw_logs_dir = raw_logs_dir
@@ -134,14 +139,6 @@ class Runner:
         if run_template:
             self.run_template = run_template
             # TODO check if run_template has ">" and warn user they don't need to handle redirection
-        else:
-            if self.type == RunnerType.CPP:
-                # TODO check if executable is in PATH
-                self.run_template = "./{executable} {instance_path}"
-            elif self.type == RunnerType.PYTHON:
-                # TODO check if python3 is in PATH
-                # TODO check if executable is a .py file and it exists
-                self.run_template = "python3 {executable} {instance_path}"
 
         # TODO check if a RunInstance can fulfill the run_template
         self.list_of_instances = list_of_instances
@@ -149,6 +146,11 @@ class Runner:
         # ---
         self._print_info()
         self._run_all_instances()
+        # TODO melhorar esse nome
+        gather_results(
+            raw_logs_dir=self.raw_logs_dir,
+            parsed_logs_csv=self.raw_logs_dir.parent / f"{self.name}_results.csv",
+        )
 
     def _run_all_instances(self) -> None:
         with Progress(
@@ -175,8 +177,6 @@ class Runner:
         inst_path = run_instance.instance_path
         log_dir = self.raw_logs_dir / f"{run_instance.name}/"
 
-        # if it exists, skip
-        # TODO check in log_dir/meta.json if the exit code is 0, if not, re-run
         if log_dir.exists():
             out.info(
                 f"Log for instance {run_instance.name} already exists, skipping..."
@@ -190,8 +190,21 @@ class Runner:
             "instance_path": run_instance.instance_path,
         }
         format_params.update(run_instance.params)
-        # BUG quando o format falha, ele só não completa
-        command = self.run_template.format(**format_params)
+
+        # Dica: Use .safe_substitute() se quiser evitar erros de chaves faltando,
+        # mas .format() é melhor para garantir que tudo o que é necessário está lá.
+        try:
+            command = self.run_template.format(**format_params)
+        except KeyError as e:
+            out.error(f"Failed to format command. Missing key: {e}")
+            return
+
+        # Inicializamos variáveis de resultado
+        exit_code = None
+        wall_time = None
+
+        # Marcamos o tempo inicial para calcular a duração manualmente
+        start_time = time.perf_counter()
 
         try:
             with (
@@ -206,41 +219,55 @@ class Runner:
                     stderr=stderr_fd,
                     text=True,
                 )
-        except subprocess.TimeoutExpired as _:
-            pass
+
+                # SE SUCESSO (o processo terminou, mesmo com erro interno):
+                exit_code = result.returncode
+                wall_time = time.perf_counter() - start_time
+
+        except subprocess.TimeoutExpired:
+            # SE TIMEOUT:
+            out.warning(f"Instance {run_instance.name} timed out.")
+            exit_code = 124  # Código padrão de timeout (ou use -1 se preferir)
+            wall_time = self.time_limit  # O tempo foi o limite estipulado
+
         except Exception as e:
             out.error(f"Error running {run_instance.name}: {e}")
             return
 
+        # Bloco de escrita do Meta JSON
         try:
-            # Write meta.json
-            # BUG se ocorrer algum erro no meio do caminho, o meta.json fica mal formatado
-            time = (
-                result.elapsed.total_seconds() if hasattr(result, "elapsed") else None
-            )
             meta = {
                 "build_name": self.name,
                 "instance_name": inst_path.name,
-                "instance_path": run_instance.instance_path,
+                "instance_path": run_instance.instance_path.as_posix(),
                 "command": command,
-                "wall_time_seconds": time,
-                "exit_code": result.returncode,
+                "wall_time_seconds": wall_time,  # Agora usamos a variável local
+                "exit_code": exit_code,  # Agora usamos a variável local
             }
-            with (log_dir / "meta.json").open("w") as meta_fd:
+
+            # Garantia de escrita atômica (opcional, mas evita arquivos corrompidos)
+            meta_path = log_dir / "meta.json"
+            with meta_path.open("w") as meta_fd:
                 json.dump(meta, meta_fd, indent=4)
+
         except Exception as e:
             out.error(f"Error writing {inst_path.name}/meta.json: {e}")
             return
 
-        # TODO call to parser
+        if self.parser_cmd:
+            try:
+                parse_instance(self.parser_cmd, log_dir)
+            except Exception as e:
+                out.error(f"Error parsing instance {inst_path.name}: {e}")
 
     def _print_info(self) -> None:
         info_panel = Panel(
-            f"[info]{'Workers':<15}: {self.n_workers}\n"
-            f"[info]{'Time Limit':<15}: {self.time_limit}s\n"
-            f"[info]{'Raw Logs':<15}: {self.raw_logs_dir}\n"
-            f"[info]{'# of Instances':<15}: {len(self.list_of_instances)}",
-            title=f"[info]Running {self.name} × {self.class_name}[/info]",
+            f"{'Workers':<15}: {self.n_workers}\n"
+            f"{'Time Limit':<15}: {self.time_limit}s\n"
+            f"{'Raw Logs':<15}: {self.raw_logs_dir}\n"
+            f"{'# of Instances':<15}: {len(self.list_of_instances)}"
+            f"{'' if not self.parser_cmd else f'\nParser':<15}: {self.parser_cmd}",
+            title=f"Running {self.name} × {self.class_name}",
             title_align="left",
             subtitle="Sit back and wait...",
             subtitle_align="right",
@@ -289,7 +316,6 @@ if __name__ == "__main__":
     raw_logs_dir = Path("./logs/raw/")
     # number of physical cores
     n_workers = psutil.cpu_count(logical=False) or 1
-    run_type = RunnerType.EXE
 
     Path(raw_logs_dir).mkdir(parents=True, exist_ok=True)
 
@@ -299,7 +325,6 @@ if __name__ == "__main__":
             name=build_name,
             raw_logs_dir=raw_logs_dir,
             list_of_instances=list_of_instances,
-            type=run_type,
             n_workers=n_workers,
             # run_template="python3 {executable} -i {instance_path} --depth {depth}", #[sofia]
         )

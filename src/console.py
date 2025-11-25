@@ -32,7 +32,7 @@ class MyConsole(Console):
 
     def error(self, *args: Any) -> None:
         # TODO print to stderr
-        self.print(*args, style="error", _stack_offset=2)
+        self.log(*args, style="error", _stack_offset=2)
 
 
 out = MyConsole()

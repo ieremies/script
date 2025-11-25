@@ -27,7 +27,6 @@ class BuildConfig(BaseModel):
     """Configurações de um [[build]]"""
 
     name: str
-    type: str
     build_command: str
     executable: str | Path
     run_template: str

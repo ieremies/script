@@ -31,7 +31,6 @@ classes = ["easy", "hard"]
 # Podemos ter múltiplos blocos [[build]].
 [[build]]
 name = "release-cplex"
-type = "cpp" # Ajuda a 'xp' a saber como construir
 # Comando para construir este build
 build_command = "make -j -k release-cplex"
 # Onde encontrar o executável após o 'build_command'
@@ -42,14 +41,12 @@ run_template = "./{executable} {instance_path} --time 3600 --seed 42"
 
 [[build]]
 name = "debug-solver"
-type = "cpp"
 build_command = "cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build/debug -- -j -k my-solver"
 executable = "build/debug/my-solver"
 run_template = "./{executable} {instance_path} --verbose"
 
 [[build]]
 name = "python-heuristic"
-type = "python"
 # Para python, 'build' pode ser instalar dependências
 build_command = "pip install -r requirements.txt"
 # O 'executável' é o script principal
