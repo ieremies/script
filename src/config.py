@@ -31,6 +31,7 @@ class BuildConfig(BaseModel):
     executable: str | Path
     run_template: str
     description: Optional[str] = None
+    time_limit: Optional[int] = 10  # em segundos
 
 
 class ExperimentConfig(BaseModel):

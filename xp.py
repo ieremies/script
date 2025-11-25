@@ -73,7 +73,7 @@ def run(
                 name=build.name,
                 raw_logs_dir=build_raw_logs_dir,
                 # TODO especificar o TL, talvez dentro da config do build
-                time_limit=10,
+                time_limit=build.time_limit,
                 list_of_instances=run_instances,
                 n_workers=jobs,
                 run_template=build.run_template,
