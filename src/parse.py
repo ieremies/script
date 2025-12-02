@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import psutil
+from rich.progress import track
 
 try:
     from src.console import out
@@ -51,8 +52,10 @@ def parse_instance(parser_cmd: str, inst_path: Path) -> None:
             stderr=subprocess.PIPE,
             text=True,
         )
-        if result.returncode != 0:
-            out.error(f"Erro ao executar o parser em {inst_path}:\n{result.stderr}")
+        if result.stdout and result.returncode != 0:
+            out.log(f"> {inst_path}:\n{result.stdout}")
+        if result.stderr and result.returncode != 0:
+            out.error(f"!> {inst_path}:\n{result.stderr}")
     except Exception as e:
         out.error(f"Erro ao executar o parser em {inst_path}: {e}")
         exit(1)
@@ -66,6 +69,7 @@ def gather_results(
     Para da instância em raw_logs_dir, lê o res.csv gerado pelo parser e junta em um dataframe.
     Escreve esse dataframe em parsed_logs_csv.
     """
+    out.log("Agregando resultados...")
     all_results = []
 
     for inst_dir in raw_logs_dir.iterdir():
@@ -105,19 +109,27 @@ def parse_and_gather(
 
     n_workers = psutil.cpu_count() or 1
     command = get_parser_command(parser_path)
+    inst_dirs = [d for d in raw_logs_dir.iterdir() if d.is_dir()]
 
     with futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
         future_to_inst = {
             executor.submit(parse_instance, command, inst_dir): inst_dir
-            for inst_dir in raw_logs_dir.iterdir()
-            if inst_dir.is_dir()
+            for inst_dir in inst_dirs
         }
 
-        for future in futures.as_completed(future_to_inst):
+        for future in track(
+            futures.as_completed(future_to_inst),
+            description="Parsing instances...",
+            total=len(future_to_inst),
+            console=out,
+        ):
             inst_dir = future_to_inst[future]
             try:
                 future.result()
             except Exception as e:
                 out.error(f"Erro ao parsear {inst_dir}: {e}")
 
-    gather_results(raw_logs_dir, parsed_logs_csv, parser_path)
+    gather_results(
+        raw_logs_dir=raw_logs_dir,
+        parsed_logs_csv=parsed_logs_csv,
+    )

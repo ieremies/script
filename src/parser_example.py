@@ -47,9 +47,9 @@ def parse_graph_log(file_path):
     with open(file_path, "r") as f:
         for line in f:
             # --- Error Checking (High Priority) ---
-            if "ERR" in line or "FATL" in line:
+            if "ERR" in line or "FATL" in line and "Signal: SIGTERM" not in line:
                 error_content = line.strip()
-                out.log(f"[error]Error found in log file: {error_content}[/error]")
+                print(f"{error_content}", file=sys.stderr)
                 exit(1)
 
             # --- Specific String Counters ---
@@ -84,6 +84,21 @@ def parse_graph_log(file_path):
                 metrics["coloring_cost"] = int(col_start.group(1))
 
     return metrics
+
+
+def parse_meta_file(file_path):
+    """
+    Parses meta.json file for additional metadata.
+    """
+    import json
+
+    try:
+        with open(file_path, "r") as f:
+            meta = json.load(f)
+    except FileNotFoundError:
+        meta = {}
+
+    return meta
 
 
 def aggregate_all_times(file_path):
@@ -124,11 +139,20 @@ def aggregate_all_times(file_path):
 
 def parse(file_path, output_csv):
     # 1. Get raw data
-    general = parse_graph_log(file_path)
-    times = aggregate_all_times(file_path)
+    general = parse_graph_log(file_path / "stderr.log")
+    times = aggregate_all_times(file_path / "stderr.log")
+    meta = parse_meta_file(file_path / "meta.json")
 
     # 2. Flatten data for CSV row
     csv_row = {}
+
+    csv_row["time"] = meta.get("wall_time_seconds", None)
+    csv_row["instance"] = meta.get("instance_name", None)
+    csv_row["exit_code"] = meta.get("exit_code", None)
+    if csv_row["exit_code"] != 0:
+        out.log(
+            f"[warning]Non-zero exit code ({csv_row['exit_code']}) detected for instance {csv_row['instance']}[/warning]"
+        )
 
     # Add Filename
     csv_row["filename"] = file_path
@@ -136,6 +160,10 @@ def parse(file_path, output_csv):
     # Add General Metrics
     csv_row["final_sets"] = general["final_sets"]
     csv_row["final_cost"] = general["coloring_cost"]
+    if csv_row["final_cost"] > 0:
+        csv_row["lb"] = csv_row["ub"] = csv_row["final_cost"]
+    else:
+        csv_row["time"] = None
     csv_row["first_clique"] = general["first_clique"]
     csv_row["count_type0_child0"] = general["count_type0_child0"]
     csv_row["count_branch_reduce_total"] = general["count_branch_reduce_total"]
@@ -165,18 +193,78 @@ def parse(file_path, output_csv):
         writer.writerow(csv_row)
 
     # 4. Print CSV to stdout (for immediate viewing)
-    writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerow(csv_row)
+    # writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
+    # writer.writeheader()
+    # writer.writerow(csv_row)
+
+
+def check_instance_bounds(inst_name: str, lb: float | None, ub: float | None):
+    """
+    Placeholder. For now, just assume that there is a
+    `~/rasc/inst/metadata.csv` and it has the best know ub and lb for each instance.
+    """
+    # get the instance line from the metadata.csv
+    known_lb = None
+    known_ub = None
+    with open(Path.home() / "rasc" / "inst" / "metadata.csv", "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row["instance"] == inst_name:
+                known_lb = float(row["lb"])
+                known_ub = float(row["ub"])
+    if known_lb is None or known_ub is None:
+        print(f"Missing information about {inst_name}", file=sys.stderr)
+        exit(1)
+
+    if lb is not None and lb > known_ub:
+        print(
+            f"{inst_name}: computed lower {lb} >= known upper {known_ub}",
+            file=sys.stderr,
+        )
+        exit(1)
+
+    if ub is not None and ub < known_lb:
+        print(
+            f"{inst_name}: computed upper {ub} <= known lower {known_lb}",
+            file=sys.stderr,
+        )
+        exit(1)
+
+    if lb is None or ub is None:
+        return
+
+    if lb > ub:
+        print(
+            f"{inst_name}: computed lower {lb} > computed upper {ub}", file=sys.stderr
+        )
+        exit(1)
+
+    if lb == ub and known_lb != known_ub:
+        print(
+            f"{inst_name}: computed optimal {lb}, but known bounds are {known_lb}-{known_ub}",
+        )
+        return
+
+    print(f"{inst_name}: bounds look good.")
 
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    file_path = Path(sys.argv[1]) / "stderr.log"  # Log file path from command line
+    file_path = Path(sys.argv[1])
     output_csv = Path(sys.argv[1]) / "res.csv"
 
     try:
         parse(file_path, output_csv)
 
+        # After parsing, check bounds
+        with open(output_csv, "r") as f:
+            reader = csv.DictReader(f)
+            if "lb" in reader.fieldnames and "ub" in reader.fieldnames:
+                for row in reader:
+                    inst_name = row["instance"]
+                    lb = float(row["lb"]) if row["lb"] else None
+                    ub = float(row["ub"]) if row["ub"] else None
+                    check_instance_bounds(inst_name, lb, ub)
+
     except FileNotFoundError:
-        print(f"Error: {file_path} not found.")
+        print(f"Error: {file_path} not found.", file=sys.stderr)

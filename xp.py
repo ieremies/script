@@ -90,7 +90,11 @@ def parse(
     raw_logs_dir = Path(input_dir)
     parser_path = Path(parser_script)
     parsed_logs_csv = raw_logs_dir / "parsed_results.csv"
-    parse_and_gather(raw_logs_dir, parser_path, parsed_logs_csv)
+    parse_and_gather(
+        raw_logs_dir=raw_logs_dir,
+        parser_path=parser_path,
+        parsed_logs_csv=parsed_logs_csv,
+    )
 
 
 @app.command()

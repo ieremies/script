@@ -147,10 +147,11 @@ class Runner:
         self._print_info()
         self._run_all_instances()
         # TODO melhorar esse nome
-        gather_results(
-            raw_logs_dir=self.raw_logs_dir,
-            parsed_logs_csv=self.raw_logs_dir.parent / f"{self.name}_results.csv",
-        )
+        if self.parser_cmd:
+            gather_results(
+                raw_logs_dir=self.raw_logs_dir,
+                parsed_logs_csv=self.raw_logs_dir.parent / f"{self.name}_results.csv",
+            )
 
     def _run_all_instances(self) -> None:
         with Progress(
@@ -199,6 +200,8 @@ class Runner:
             out.error(f"Failed to format command. Missing key: {e}")
             return
 
+        command = f"timeout {self.time_limit}s {command}"
+
         # Inicializamos variáveis de resultado
         exit_code = None
         wall_time = None
@@ -214,7 +217,7 @@ class Runner:
                 result = subprocess.run(
                     command,
                     shell=True,
-                    timeout=self.time_limit,
+                    timeout=int(self.time_limit),
                     stdout=stdout_fd,
                     stderr=stderr_fd,
                     text=True,
@@ -245,7 +248,6 @@ class Runner:
                 "exit_code": exit_code,  # Agora usamos a variável local
             }
 
-            # Garantia de escrita atômica (opcional, mas evita arquivos corrompidos)
             meta_path = log_dir / "meta.json"
             with meta_path.open("w") as meta_fd:
                 json.dump(meta, meta_fd, indent=4)
