@@ -200,7 +200,9 @@ class Runner:
             out.error(f"Failed to format command. Missing key: {e}")
             return
 
-        command = f"timeout {self.time_limit}s {command}"
+        command = (
+            f"timeout {self.time_limit}s -p -k {int(self.time_limit * 1.01)} {command}"
+        )
 
         # Inicializamos variáveis de resultado
         exit_code = None

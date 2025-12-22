@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -93,6 +94,14 @@ def gather_results(
         final_df = pd.concat(all_results, ignore_index=True)
         final_df.to_csv(parsed_logs_csv, index=False)
         out.info(f"Resultados agregados escritos em {parsed_logs_csv}")
+
+        # Create or update the symbolic link to the last results CSV
+        symlink_path = Path.home() / "last_results.csv"
+        if symlink_path.exists():
+            symlink_path.unlink() # Remove existing symlink
+
+        os.symlink(parsed_logs_csv, symlink_path)
+        out.info(f"Link simbólico para os últimos resultados criado em {symlink_path}")
     else:
         out.warning("Nenhum resultado foi agregado.")
 
