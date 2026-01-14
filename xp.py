@@ -36,6 +36,10 @@ def run(
     out.rule("Preliminares")
     # 1. Lê o arquivo .toml
     config = load_config(config_toml)
+    if config is None:
+        out.error("Configuração não carregada.")
+        raise typer.Exit(1)
+
     # 2. Garante que a root do projeto existe (possivelmente clonando o repositório)
     get_project_root(config.project)
     # 3. Para cada build, executa o comando de build
@@ -56,13 +60,16 @@ def run(
     parser_cmd = get_parser_command(parser_script) if parser_script else None
 
     for build in config.build:
+        if config.instances.instances is None:
+            continue
+
         for inst_class in config.instances.classes:
             build_raw_logs_dir = raw_logs_dir / tag / build.name
             build_raw_logs_dir.mkdir(parents=True, exist_ok=True)
 
             run_instances = [
                 RunInstance(
-                    executable=build.executable,
+                    executable=Path(build.executable),
                     instance_path=instance_path,
                     # TODO especificar params adicionais do RunInstance
                 )
@@ -73,7 +80,7 @@ def run(
                 name=build.name,
                 raw_logs_dir=build_raw_logs_dir,
                 # TODO especificar o TL, talvez dentro da config do build
-                time_limit=build.time_limit,
+                time_limit=build.time_limit or 3600,
                 list_of_instances=run_instances,
                 n_workers=jobs,
                 run_template=build.run_template,

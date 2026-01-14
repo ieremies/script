@@ -46,11 +46,13 @@ O script agora formatará corretamente o comando como
 
 import json
 import subprocess
+import threading
 import time
 from concurrent import futures
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
+import psutil
 from pydantic import BaseModel, Field
 from rich.panel import Panel
 from rich.progress import (
@@ -66,7 +68,7 @@ try:
 except ImportError:
     from rich.console import Console
 
-    out = Console()
+    out = Console()  # type: ignore
 
 try:
     from src.parse import gather_results, parse_instance
@@ -113,8 +115,8 @@ class Runner:
     list_of_instances: list[RunInstance]
     n_workers: int = 1
     run_template: str = "{executable} {instance_path}"
-    class_name: str = None
-    parser_cmd: str = None
+    class_name: Optional[str] = None
+    parser_cmd: Optional[str] = None
 
     def __init__(
         self,
@@ -124,8 +126,8 @@ class Runner:
         time_limit: int = 3600,
         n_workers: int = 1,
         run_template: str = "",
-        class_name: str = None,
-        parser_cmd: str = None,
+        class_name: Optional[str] = None,
+        parser_cmd: Optional[str] = None,
     ):
         self.name = name
         self.n_workers = n_workers
@@ -153,35 +155,72 @@ class Runner:
                 parsed_logs_csv=self.raw_logs_dir.parent / f"{self.name}_results.csv",
             )
 
+    def _monitor_memory(self, stop_event: threading.Event) -> None:
+        while not stop_event.is_set():
+            mem = psutil.virtual_memory()
+            if mem.percent > 80.0:
+                out.error(f"High memory usage detected: {mem.percent}% > 80%")
+                try:
+                    # Get list of processes sorted by memory usage
+                    processes = sorted(
+                        psutil.process_iter(attrs=["pid", "name", "memory_info", "cmdline"]),
+                        key=lambda p: p.info["memory_info"].rss,
+                        reverse=True,
+                    )
+
+                    out.print("Top 20 processes by memory usage:")
+                    for p in processes[:20]:
+                        mem_mb = p.info["memory_info"].rss / (1024 * 1024)
+                        cmdline = " ".join(p.info["cmdline"]) if p.info["cmdline"] else p.info["name"]
+                        out.print(
+                            f"PID: {p.info['pid']:<6} "
+                            f"Cmd: {cmdline:<50} "
+                            f"Memory: {mem_mb:8.2f} MB"
+                        )
+                except Exception as e:
+                    out.error(f"Could not retrieve process list: {e}")
+
+            stop_event.wait(10)
+
     def _run_all_instances(self) -> None:
-        with Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            "{task.completed}|{task.total}",
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-            console=out,
-        ) as progress:
-            total_tasks = len(self.list_of_instances)
-            task = progress.add_task("Running", total=total_tasks)
+        stop_monitor = threading.Event()
+        monitor_thread = threading.Thread(
+            target=self._monitor_memory, args=(stop_monitor,), daemon=True
+        )
+        monitor_thread.start()
 
-            with futures.ThreadPoolExecutor(max_workers=self.n_workers) as executor:
-                future_to_instance = {
-                    executor.submit(self._run_instance, run_instance): run_instance
-                    for run_instance in self.list_of_instances
-                }
+        try:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                "{task.completed}|{task.total}",
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                console=out,
+            ) as progress:
+                total_tasks = len(self.list_of_instances)
+                task = progress.add_task("Running", total=total_tasks)
 
-                for _ in futures.as_completed(future_to_instance):
-                    progress.update(task, advance=1)
+                with futures.ThreadPoolExecutor(max_workers=self.n_workers) as executor:
+                    future_to_instance = {
+                        executor.submit(self._run_instance, run_instance): run_instance
+                        for run_instance in self.list_of_instances
+                    }
+
+                    for _ in futures.as_completed(future_to_instance):
+                        progress.update(task, advance=1)
+        finally:
+            stop_monitor.set()
+            monitor_thread.join()
 
     def _run_instance(self, run_instance: RunInstance) -> None:
         inst_path = run_instance.instance_path
         log_dir = self.raw_logs_dir / f"{run_instance.name}/"
 
         if log_dir.exists():
-            out.info(
-                f"Log for instance {run_instance.name} already exists, skipping..."
-            )
+            # out.info(
+            #     f"Log for instance {run_instance.name} already exists, skipping..."
+            # )
             return
 
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -200,9 +239,7 @@ class Runner:
             out.error(f"Failed to format command. Missing key: {e}")
             return
 
-        command = (
-            f"timeout {self.time_limit}s -p -k {int(self.time_limit * 1.01)} {command}"
-        )
+        command = f"timeout --preserve-status --kill-after={int(self.time_limit * 0.01)} {self.time_limit}s {command}"
 
         # Inicializamos variáveis de resultado
         exit_code = None
@@ -231,7 +268,7 @@ class Runner:
 
         except subprocess.TimeoutExpired:
             # SE TIMEOUT:
-            out.warning(f"Instance {run_instance.name} timed out.")
+            # out.warning(f"Instance {run_instance.name} timed out.")
             exit_code = 124  # Código padrão de timeout (ou use -1 se preferir)
             wall_time = self.time_limit  # O tempo foi o limite estipulado
 
@@ -270,7 +307,7 @@ class Runner:
             f"{'Time Limit':<15}: {self.time_limit}s\n"
             f"{'Raw Logs':<15}: {self.raw_logs_dir}\n"
             f"{'# of Instances':<15}: {len(self.list_of_instances)}"
-            f"{'' if not self.parser_cmd else f'\nParser':<15}: {self.parser_cmd}",
+            f"{'' if not self.parser_cmd else f'\nParser':<16}: {self.parser_cmd}",
             title=f"Running {self.name} × {self.class_name}",
             title_align="left",
             subtitle="Sit back and wait...",

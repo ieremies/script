@@ -1,14 +1,14 @@
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Union
 
 from src.config import BuildConfig, InstanceConfig, ProjectConfig
 from src.console import out
 
 
 @contextmanager
-def cd(path: Path):
+def cd(path: Union[Path, str]):
     """Muda o diretório de trabalho atual para o caminho especificado e retorna ao diretório original ao sair do contexto."""
     old_cwd = Path.cwd()
     os.chdir(path)
@@ -18,7 +18,7 @@ def cd(path: Path):
         os.chdir(old_cwd)
 
 
-def get_path_or_clone(location: str, default_name: str = None) -> Path:
+def get_path_or_clone(location: Union[str, Path], default_name: Optional[str] = None) -> Path:
     """Dado uma string, que pode ser um caminho local ou um url de repositório git,
     retorna-se um Path local, possivelmente clonando o repositório.
     """
@@ -30,18 +30,18 @@ def get_path_or_clone(location: str, default_name: str = None) -> Path:
 
     # Se não existir, tenta clonar como repositório git
 
-    repo_url = location
+    repo_url = str(location)
     if repo_url.startswith("gh:"):
         repo_url = "https://github.com/" + repo_url[3:] + ".git"
 
-    clone_path = Path("./") / (default_name or location.split("/")[-1])
+    clone_path = Path("./") / (default_name or str(location).split("/")[-1])
     if clone_path.exists():
         # out.print(f"O diretório {clone_path} já existe. Pulando clonagem.")
         return clone_path.resolve()
 
     out.print(f"Clonando repositório {repo_url} para {clone_path}...")
     try:
-        import git
+        import git  # type: ignore
 
         git.Repo.clone_from(repo_url, clone_path)
     except Exception as e:

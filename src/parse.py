@@ -2,7 +2,7 @@ import os
 import subprocess
 from pathlib import Path
 
-import pandas as pd
+import pandas as pd  # type: ignore
 import psutil
 from rich.progress import track
 
@@ -11,7 +11,7 @@ try:
 except ImportError:
     from rich.console import Console
 
-    out = Console()
+    out = Console()  # type: ignore
 
 
 def get_parser_command(parser_path: Path) -> str:
@@ -96,12 +96,16 @@ def gather_results(
         out.info(f"Resultados agregados escritos em {parsed_logs_csv}")
 
         # Create or update the symbolic link to the last results CSV
-        symlink_path = Path.home() / "last_results.csv"
-        if symlink_path.exists():
-            symlink_path.unlink() # Remove existing symlink
+        try:
+            symlink_path = Path.home() / "last_results.csv"
+            symlink_path.unlink(missing_ok=True)  # Remove existing symlink if it exists
 
-        os.symlink(parsed_logs_csv, symlink_path)
-        out.info(f"Link simbólico para os últimos resultados criado em {symlink_path}")
+            symlink_path.symlink_to(parsed_logs_csv.resolve())
+            out.info(
+                f"Link simbólico para os últimos resultados criado em {symlink_path}"
+            )
+        except Exception as e:
+            out.error(f"Erro ao criar link simbólico: {e}")
     else:
         out.warning("Nenhum resultado foi agregado.")
 
