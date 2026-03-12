@@ -2,7 +2,7 @@
 
 import marimo
 
-__generated_with = "0.19.2"
+__generated_with = "0.20.2"
 app = marimo.App(width="columns")
 
 
@@ -76,6 +76,7 @@ def _(List, Path):
         root = Path(root)
         root.expanduser()
         return list(root.glob("*.csv"))
+
     return (get_csvs,)
 
 
@@ -95,6 +96,7 @@ def _(pl):
             )
             .alias("gap")
         )
+
     return (compute_gap,)
 
 
@@ -109,6 +111,7 @@ def _(Path, compute_gap, pl):
         df = df.with_columns(pl.lit(file.stem).alias("source"))
         return df
         ...
+
     return (get_df,)
 
 
@@ -134,6 +137,7 @@ def _(List, pl):
             pl.col(pl.Float64, pl.Float32).round(6)
         )
         ...
+
     return (concat_dfs,)
 
 
@@ -180,6 +184,78 @@ def _(concat_dfs, csvs_files, files, get_df, instance_filter, mo):
     return (df,)
 
 
+@app.cell
+def _(df, np, pl):
+    # 1. Prepare DataFrame with log_time, filtering out non-positive times if any
+    _log_sampled_df_prep = df.filter(pl.col("time") > 0).with_columns(
+        pl.col("time").log10().alias("_log_time")
+    )
+
+    # 2. Define number of bins for log-spaced sampling
+    _log_num_bins = 1000
+
+    # Initialize an empty series for sampled instances
+    _log_sampled_instances_series = pl.Series([], dtype=pl.String)
+
+    # 3. Calculate the bin edges in log space
+    min_log = _log_sampled_df_prep["_log_time"].min()
+    max_log = _log_sampled_df_prep["_log_time"].max()
+
+    # Create evenly spaced log values
+    target_log_values = np.linspace(min_log, max_log, _log_num_bins)
+
+    # 4. For each target log value, find the closest actual instance
+    # We can do this by joining or using a search-sorted approach
+    _log_sampled_instances_list = []
+
+    for val in target_log_values:
+        # Find the row where the absolute difference is minimized
+        closest_instance = (
+            _log_sampled_df_prep.with_columns(
+                (pl.col("_log_time") - val).abs().alias("_dist")
+            )
+            .sort("_dist")
+            .select("instance")  # Assuming 'instance_id' is your identifier column
+            .limit(1)
+        )
+        _log_sampled_instances_list.append(closest_instance)
+
+    # 5. Combine results into the final Series
+    _log_sampled_instances_series = pl.concat(_log_sampled_instances_list)[
+        "instance"
+    ].unique()
+
+    # 6. Get all instances where time is lower than 10s
+    #_low_time_instances = (
+    #    df.filter((pl.col("time") > 0) & (pl.col("time") < 10))
+    #    .select("instance")
+    #    .to_series()
+    #)
+
+    # 7. Get 5% of unsolved instances (null, none, or nan)
+    _unsolved_instances = (
+        df.filter(pl.col("time").is_null() | pl.col("time").is_nan())
+        .sample(fraction=0.1)
+        .select("instance")
+        .to_series()
+    )
+
+    # 8. Combine everything into the final series
+    _log_sampled_instances_series = (
+        pl.concat([
+            _log_sampled_instances_series, 
+            #_low_time_instances, 
+            _unsolved_instances
+        ])
+        .unique()
+    )
+
+    # Final count check
+    print(f"Total sampled instances: {len(_log_sampled_instances_series)}")
+    _log_sampled_instances_series
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -215,6 +291,7 @@ def _(pl):
             ),
         )
         return stats_df.to_dict(as_series=False)
+
     return (get_stats,)
 
 
@@ -326,6 +403,7 @@ def _(alt, pl):
             .properties(width=800, height=450)
             .configure_axis(grid=True, gridOpacity=0.7)
         )
+
     return (altair_accu,)
 
 
@@ -363,6 +441,7 @@ def _(pl):
         return df.with_columns(
             ratio=pl.col(col) / pl.col(col).min().over("instance")
         )
+
     return (compute_ratio,)
 
 
@@ -427,6 +506,7 @@ def _(altair_accu, pl):
                 title=f"Cumulative Relative Histogram of Time (base = {base})"
             )
         )
+
     return (alt_cumulative_relative_histogram,)
 
 
@@ -535,6 +615,7 @@ def _(pl):
                 "ub_s2": f"{source2} UB",
             }
         )
+
     return (get_exclusive_solved,)
 
 
@@ -587,6 +668,7 @@ def _(pl):
                 "value_s1": "colors",
             }
         )
+
     return (get_solved_with_time_factor,)
 
 
@@ -662,6 +744,7 @@ def _(pl):
             for col in df.columns
             if s1.get(col) or s2.get(col)
         ]
+
     return (compare_instance,)
 
 
@@ -765,12 +848,7 @@ def _():
     return
 
 
-@app.cell(column=1)
-def _():
-    return
-
-
-@app.cell(hide_code=True)
+@app.cell(column=1, hide_code=True)
 def _(pl):
     meta = (
         pl.read_csv("~/proj/color/inst/metadata.csv")
@@ -786,7 +864,7 @@ def _(pl):
             ]
         )
         # drop lines where the "instance" starts with "g"
-        .filter(~pl.col("instance").str.starts_with("g"))
+        # .filter(~pl.col("instance").str.starts_with("g"))
         # add a column "solved" = pl.col("lb") == pl.col("ub")
         .with_columns((pl.col("lb") == pl.col("ub")).alias("solved"))
     )
@@ -800,11 +878,22 @@ def _(Path, concat_dfs, get_df, get_exclusive_solved, meta, pl):
         [
             get_df(f)
             for f in [
-                Path("/Users/ieremies/proj/color/logs/held.csv"),
+                Path("/Users/ieremies/proj/color/logs/new_held.csv"),
                 Path("/Users/ieremies/proj/color/logs/ordering.csv"),
             ]
         ]
     )
+
+    matilda = (
+        get_df(Path("/Users/ieremies/proj/color/logs/new_held.csv"))
+        .select(pl.col("instance"))
+        .unique()
+    )
+
+    with open("/Users/ieremies/proj/color/inst/some-matilda") as f:
+        some_matilda = pl.DataFrame({"instance": [str(line.strip()) for line in f.readlines()]})
+        some_matilda = some_matilda.select(pl.col("instance")).unique()
+
     all = _df.select(pl.col("instance")).unique()
 
     frac_is_opt = (
@@ -965,12 +1054,14 @@ def _(Path, concat_dfs, get_df, get_exclusive_solved, meta, pl):
         instance_set_missing_frac_lb,
         instance_set_missing_ub,
         instance_set_root,
+        matilda,
         ordering_better_root_lb,
         ordering_better_than_my_clique,
         ordering_faster_root_lb,
         ordering_faster_than_my_clique,
         solved_by_held,
         solved_by_ordering,
+        some_matilda,
     )
 
 
@@ -981,6 +1072,7 @@ def _(
     instance_set_missing_frac_lb,
     instance_set_missing_ub,
     instance_set_root,
+    matilda,
     mo,
     ordering_better_root_lb,
     ordering_better_than_my_clique,
@@ -988,6 +1080,7 @@ def _(
     ordering_faster_than_my_clique,
     solved_by_held,
     solved_by_ordering,
+    some_matilda,
 ):
     instance_filter = mo.ui.radio(
         {
@@ -1002,6 +1095,8 @@ def _(
             f"{len(ordering_faster_root_lb):>3} | ordering matches held root_lb but is faster": ordering_faster_root_lb,
             f"{len(ordering_better_than_my_clique):>3} | ordering has better root_obj than my first_clique": ordering_better_than_my_clique,
             f"{len(ordering_faster_than_my_clique):>3} | ordering matches my first_clique but is faster": ordering_faster_than_my_clique,
+            f"{len(matilda):>3} | instances in matilda": matilda,
+            f"{len(some_matilda):>3} | some matilda instances": some_matilda,
         },
         label="Select which set of instances to view:",
         value=f"{len(all):>3} | all",
