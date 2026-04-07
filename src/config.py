@@ -32,6 +32,7 @@ class BuildConfig(BaseModel):
     run_template: str
     description: Optional[str] = None
     time_limit: Optional[int] = 10  # em segundos
+    git_ref: Optional[str | List[str]] = None
 
 
 class ExperimentConfig(BaseModel):
@@ -54,6 +55,22 @@ def load_config(config_path: str) -> Optional[ExperimentConfig]:
         # Esta é a mágica: Pydantic analisa o dicionário
         # e o transforma em um objeto Python com tipagem.
         config = ExperimentConfig(**raw_config_dict)
+
+        expanded_builds = []
+        for build in config.build:
+            if isinstance(build.git_ref, list):
+                for ref in build.git_ref:
+                    new_build_dict = build.model_dump() if hasattr(build, "model_dump") else build.dict()
+                    new_build_dict["name"] = f"{build.name}_{ref.replace('/', '_')}"
+                    new_build_dict["git_ref"] = ref
+                    expanded_builds.append(BuildConfig(**new_build_dict))
+            elif isinstance(build.git_ref, str):
+                build.name = f"{build.name}_{build.git_ref.replace('/', '_')}"
+                expanded_builds.append(build)
+            else:
+                expanded_builds.append(build)
+        config.build = expanded_builds
+
         return config
 
     except FileNotFoundError:

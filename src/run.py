@@ -44,15 +44,15 @@ O script agora formatará corretamente o comando como
 
 # TODO gracefully handle KeyboardInterrupt to stop all running instances
 
+import itertools  # Added for cyclic core assignment
 import json
 import subprocess
+import sys  # Added for platform checks
 import threading
 import time
 from concurrent import futures
 from pathlib import Path
 from typing import Any, Dict, Optional
-import sys # Added for platform checks
-import itertools # Added for cyclic core assignment
 
 import psutil
 from pydantic import BaseModel, Field
@@ -153,11 +153,17 @@ class Runner:
             num_physical_cores = psutil.cpu_count(logical=False)
             if num_physical_cores:
                 self.physical_core_ids = list(range(num_physical_cores))
-                out.info(f"Detected {num_physical_cores} physical CPU cores for task pinning.")
+                out.info(
+                    f"Detected {num_physical_cores} physical CPU cores for task pinning."
+                )
             else:
-                out.warning("Could not detect physical CPU cores. Task pinning will not be used.")
+                out.warning(
+                    "Could not detect physical CPU cores. Task pinning will not be used."
+                )
         else:
-            out.info(f"Task pinning is only supported on Linux. Current OS: {sys.platform}")
+            out.info(
+                f"Task pinning is only supported on Linux. Current OS: {sys.platform}"
+            )
 
         # ---
         self._print_info()
@@ -177,7 +183,9 @@ class Runner:
                 try:
                     # Get list of processes sorted by memory usage
                     processes = sorted(
-                        psutil.process_iter(attrs=["pid", "name", "memory_info", "cmdline"]),
+                        psutil.process_iter(
+                            attrs=["pid", "name", "memory_info", "cmdline"]
+                        ),
                         key=lambda p: p.info["memory_info"].rss,
                         reverse=True,
                     )
@@ -185,7 +193,11 @@ class Runner:
                     out.print("Top 20 processes by memory usage:")
                     for p in processes[:20]:
                         mem_mb = p.info["memory_info"].rss / (1024 * 1024)
-                        cmdline = " ".join(p.info["cmdline"]) if p.info["cmdline"] else p.info["name"]
+                        cmdline = (
+                            " ".join(p.info["cmdline"])
+                            if p.info["cmdline"]
+                            else p.info["name"]
+                        )
                         out.print(
                             f"PID: {p.info['pid']:<6} "
                             f"Cmd: {cmdline:<50} "
@@ -219,21 +231,27 @@ class Runner:
                 core_id_iterator = None
                 if self.physical_core_ids:
                     core_id_iterator = itertools.cycle(self.physical_core_ids)
-                
+
                 with futures.ThreadPoolExecutor(max_workers=self.n_workers) as executor:
                     future_to_instance = {}
                     for run_instance in self.list_of_instances:
-                        current_core_id = next(core_id_iterator) if core_id_iterator else None
-                        future = executor.submit(self._run_instance, run_instance, current_core_id)
+                        current_core_id = (
+                            next(core_id_iterator) if core_id_iterator else None
+                        )
+                        future = executor.submit(
+                            self._run_instance, run_instance, current_core_id
+                        )
                         future_to_instance[future] = run_instance
-                    
+
                     for _ in futures.as_completed(future_to_instance):
                         progress.update(task, advance=1)
         finally:
             stop_monitor.set()
             monitor_thread.join()
 
-    def _run_instance(self, run_instance: RunInstance, core_id: Optional[int] = None) -> None:
+    def _run_instance(
+        self, run_instance: RunInstance, core_id: Optional[int] = None
+    ) -> None:
         inst_path = run_instance.instance_path
         log_dir = self.raw_logs_dir / f"{run_instance.name}/"
 
@@ -260,9 +278,8 @@ class Runner:
             return
 
         # Prepend taskset command if core_id is provided and physical cores are detected
-        if core_id is not None and self.physical_core_ids:
-            command = f"taskset -c {core_id} {command}"
-            out.debug(f"Assigned instance {run_instance.name} to CPU core {core_id}")
+        # if core_id is not None and self.physical_core_ids:
+        #     command = f"taskset -c {core_id} {command}"
 
         command = f"timeout --preserve-status --kill-after={int(self.time_limit * 0.01)} {self.time_limit}s {command}"
 

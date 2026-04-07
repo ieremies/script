@@ -64,32 +64,85 @@ def get_project_root(conf: ProjectConfig) -> None:
     out.print(f"Projeto disponível em: {conf.location}")
 
 
-def build_all(build_configs: List[BuildConfig], project_config: ProjectConfig) -> None:
+def build_target(build: BuildConfig, project_config: ProjectConfig) -> None:
     """
-    Para cada build, executa o comando de build.
-    Se terminar com sucesso, build_configs.executable será do tipo Path com o caminho para o executável (ou script python)
+    Executa o comando de build para um único alvo.
+    Se terminar com sucesso, build.executable será do tipo Path com o caminho para o executável (ou script python)
     """
 
     import subprocess
 
     with cd(project_config.location):
-        for build in build_configs:
-            out.print(f"> {build.build_command} ", end="")
+        if build.git_ref:
+            out.print(f"Checking out {build.git_ref}...")
             try:
                 subprocess.run(
-                    build.build_command,
+                    f"git checkout {build.git_ref}",
                     shell=True,
                     check=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                 )
-                out.success(" sucesso!")
             except subprocess.CalledProcessError as e:
-                out.error(f"\nErro durante o build:\n{e.stderr.decode()}")
+                out.error(f"Erro ao fazer checkout de {build.git_ref}:\n{e.stderr.decode()}")
                 exit(1)
 
-            # BUG isso aqui vai dar merda
-            build.executable = Path(build.executable).resolve()
+        from rich.progress import (
+            BarColumn,
+            Progress,
+            SpinnerColumn,
+            TextColumn,
+            TimeElapsedColumn,
+        )
+        import re
+
+        out.print(f"> {build.build_command}")
+        
+        process = subprocess.Popen(
+            build.build_command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, # merge stderr for complete logs
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=out,
+        ) as progress:
+            task = progress.add_task("Building...", total=100)
+
+            for line in process.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Procura por progresso do CMake, por exemplo "[ 15%]" ou "[100%]"
+                match = re.search(r'\[\s*(\d+)%\]', line)
+                if match:
+                    percent = int(match.group(1))
+                    progress.update(task, completed=percent)
+                else:
+                    # Atualiza a descrição com a linha atual truncada
+                    short_line = line[:60] + "..." if len(line) > 60 else line
+                    progress.update(task, description=f"Building... {short_line}")
+
+            process.wait()
+
+            if process.returncode != 0:
+                out.error(f"\nErro durante o build (código {process.returncode}). Veja a saída acima.")
+                exit(1)
+            else:
+                progress.update(task, completed=100, description="Build concluído com sucesso!")
+
+        # BUG isso aqui vai dar merda
+        build.executable = Path(build.executable).resolve()
 
 
 def get_instances(conf: InstanceConfig) -> None:

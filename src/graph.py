@@ -2,11 +2,11 @@
 
 import marimo
 
-__generated_with = "0.20.2"
-app = marimo.App(width="columns")
+__generated_with = "0.22.4"
+app = marimo.App(width="medium")
 
 
-@app.cell(column=0)
+@app.cell(hide_code=True)
 def _():
     from pathlib import Path
     from typing import List
@@ -17,54 +17,9 @@ def _():
     import polars as pl
 
     PROJECT_ROOT = Path("/Users/ieremies/proj/color")
+
+    # alt.data_transformers.enable("vegafusion")
     return List, PROJECT_ROOT, Path, alt, mo, np, pl
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Ideias:
-    - usar o `mo.stat` para visualizar métricas principais de desempenho.
-    - filtrar o dataframe para apenas as colunas que são importantes. O altair coloca todo o dataframe no payload, o que pode ser um problema se houver muitos dados.
-    - usar o `mo.watch.directory` para atualizar a lista de arquivos.
-    - colocar este notebook para ser servido na `opt3`: coloca numa porta alta e faz `ssh -L 9000:127.0.0.1:8080 ieremies@opt3`.
-    - Eu posso gastar muito tempo no `clique` sem "precisar". Por exemplo, `DSJC1000.9` gasta 800s para achar um clique de 60 sendo que o menor grau é 870.
-    - Porque as instâncias `mug` precisam do LS para resolver?
-    - quem está gerando os UB?
-
-    ## Memória
-
-    As seguintes instâncias aprensemtaram "problemas de memória". As duas primeiras utilizaram memória de mais, o resto foi morto pelo limite de nós do _branch-and-reduce_. Em especial, `flat_300_28_0` chegou a utilizar 13Gb mesmo sendo morto aos 436s.
-
-    ```
-    DSJC1000.9
-    flat300_28_0
-    ---
-    2-Insertions_5
-    3-Insertions_4
-    4-Insertions_4
-    DSJC250.1
-    DSJC500.1
-    DSJC500.1
-    DSJC500.5
-    ash331GPIA
-    le450_15b
-    le450_15c
-    le450_15d
-    le450_25c
-    le450_25d
-    le450_5b
-    le450_5c
-    le450_5d
-    queen12_12
-    queen13_13
-    queen14_14
-    queen15_15
-    queen16_16
-    wap06a
-    ```
-    """)
-    return
 
 
 @app.cell(hide_code=True)
@@ -171,6 +126,7 @@ def _(concat_dfs, csvs_files, files, get_df, instance_filter, mo):
     mo.stop(csvs_files is None or len(files.value) == 0, "No files selected.")
 
     df = concat_dfs([get_df(f) for f in files.value], instance_filter.value)
+    # df = df.filter(pl.col("time") > 1)
 
     # list of unique values in the column "instance"
     unique_instances = df["instance"].unique().to_list()
@@ -184,89 +140,50 @@ def _(concat_dfs, csvs_files, files, get_df, instance_filter, mo):
     return (df,)
 
 
-@app.cell
-def _(df, np, pl):
-    # 1. Prepare DataFrame with log_time, filtering out non-positive times if any
-    _log_sampled_df_prep = df.filter(pl.col("time") > 0).with_columns(
-        pl.col("time").log10().alias("_log_time")
+@app.cell(hide_code=True)
+def _(
+    all,
+    instance_set_missing_both,
+    instance_set_missing_frac_lb,
+    instance_set_missing_ub,
+    instance_set_root,
+    matilda,
+    mo,
+    ordering_better_root_lb,
+    ordering_better_than_my_clique,
+    ordering_faster_root_lb,
+    ordering_faster_than_my_clique,
+    solved_by_held,
+    solved_by_ordering,
+    some_matilda,
+):
+    instance_filter = mo.ui.radio(
+        {
+            f"{len(all):>3} | all": all,
+            f"{len(instance_set_root):>3} | both root_ub and root_lb are optimal at root": instance_set_root,
+            f"{len(instance_set_missing_ub):>3} | frac chrom is the optimal, but UB is missing": instance_set_missing_ub,
+            f"{len(instance_set_missing_frac_lb):>3} | UB at root is the optimal, but LB is missing": instance_set_missing_frac_lb,
+            f"{len(instance_set_missing_both):>3} | both LB and UB are missing at root": instance_set_missing_both,
+            f"{len(solved_by_held):>3} | solved by held but not by ordering": solved_by_held,
+            f"{len(solved_by_ordering):>3} | solved by ordering but not by held": solved_by_ordering,
+            f"{len(ordering_better_root_lb):>3} | ordering has better root_lb than held": ordering_better_root_lb,
+            f"{len(ordering_faster_root_lb):>3} | ordering matches held root_lb but is faster": ordering_faster_root_lb,
+            f"{len(ordering_better_than_my_clique):>3} | ordering has better root_obj than my first_clique": ordering_better_than_my_clique,
+            f"{len(ordering_faster_than_my_clique):>3} | ordering matches my first_clique but is faster": ordering_faster_than_my_clique,
+            f"{len(matilda):>3} | instances in matilda": matilda,
+            f"{len(some_matilda):>3} | some matilda instances": some_matilda,
+        },
+        label="Select which set of instances to view:",
+        value=f"{len(all):>3} | all",
     )
-
-    # 2. Define number of bins for log-spaced sampling
-    _log_num_bins = 1000
-
-    # Initialize an empty series for sampled instances
-    _log_sampled_instances_series = pl.Series([], dtype=pl.String)
-
-    # 3. Calculate the bin edges in log space
-    min_log = _log_sampled_df_prep["_log_time"].min()
-    max_log = _log_sampled_df_prep["_log_time"].max()
-
-    # Create evenly spaced log values
-    target_log_values = np.linspace(min_log, max_log, _log_num_bins)
-
-    # 4. For each target log value, find the closest actual instance
-    # We can do this by joining or using a search-sorted approach
-    _log_sampled_instances_list = []
-
-    for val in target_log_values:
-        # Find the row where the absolute difference is minimized
-        closest_instance = (
-            _log_sampled_df_prep.with_columns(
-                (pl.col("_log_time") - val).abs().alias("_dist")
-            )
-            .sort("_dist")
-            .select("instance")  # Assuming 'instance_id' is your identifier column
-            .limit(1)
-        )
-        _log_sampled_instances_list.append(closest_instance)
-
-    # 5. Combine results into the final Series
-    _log_sampled_instances_series = pl.concat(_log_sampled_instances_list)[
-        "instance"
-    ].unique()
-
-    # 6. Get all instances where time is lower than 10s
-    #_low_time_instances = (
-    #    df.filter((pl.col("time") > 0) & (pl.col("time") < 10))
-    #    .select("instance")
-    #    .to_series()
-    #)
-
-    # 7. Get 5% of unsolved instances (null, none, or nan)
-    _unsolved_instances = (
-        df.filter(pl.col("time").is_null() | pl.col("time").is_nan())
-        .sample(fraction=0.1)
-        .select("instance")
-        .to_series()
-    )
-
-    # 8. Combine everything into the final series
-    _log_sampled_instances_series = (
-        pl.concat([
-            _log_sampled_instances_series, 
-            #_low_time_instances, 
-            _unsolved_instances
-        ])
-        .unique()
-    )
-
-    # Final count check
-    print(f"Total sampled instances: {len(_log_sampled_instances_series)}")
-    _log_sampled_instances_series
-    return
+    instance_filter
+    return (instance_filter,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     # Graphs
-
-    Overview of the results.
-
-    - Total time: must be the total time of instances that are solved by all
-    - Same for the average time.
-    - Count the number of roots solved.
-    - Count the number of root_ub == opt
     """)
     return
 
@@ -399,15 +316,14 @@ def _(alt, pl):
 
         # === Compose and return chart ===
         return (
-            (lines + points)
-            .properties(width=800, height=450)
-            .configure_axis(grid=True, gridOpacity=0.7)
+            (lines + points).properties(width=800, height=450)
+            # .configure_axis(grid=True, gridOpacity=0.7)
         )
 
     return (altair_accu,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(altair_accu, df):
     altair_accu(df, x_axis="time", max_x=3600.0).interactive().properties(
         title="Cumulative Time to Solve"
@@ -415,7 +331,7 @@ def _(altair_accu, df):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(altair_accu, df):
     altair_accu(df, x_axis="gap", max_x=3600.0).interactive().properties(
         title="Cumulative Gap"
@@ -423,7 +339,7 @@ def _(altair_accu, df):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## Performance Profile
@@ -431,7 +347,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(pl):
     def compute_ratio(df: pl.DataFrame, col: str = "time") -> pl.DataFrame:
         """
@@ -445,7 +361,7 @@ def _(pl):
     return (compute_ratio,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(altair_accu, compute_ratio, df):
     altair_accu(
         compute_ratio(df), x_axis="ratio", max_x=1000
@@ -459,6 +375,55 @@ def _(altair_accu, compute_ratio, df):
         compute_ratio(df, "gap"), x_axis="ratio", max_x=10
     ).interactive().properties(title="Performance Profile of the Gap")
     return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Root time
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(df, pl):
+    # for each "source" in df, count how many instances have "root_lb" not null and "time" null
+    (
+        df.filter(pl.col("root_lb").is_not_null() & pl.col("time").is_null())
+        .group_by("source")
+        .agg(pl.len().alias("count_finished_root"))
+    )
+
+    # for each "source" in df, count how many instances does not have "root_lb", "time" null, but either 
+    return
+
+
+@app.cell(hide_code=True)
+def _(altair_accu, compute_ratio, df, pl):
+    # 1. Get the list of all unique sources present in your data
+    all_sources = df.select(pl.col("source").unique()).to_series().to_list()
+    num_sources = len(all_sources)
+
+    # 2. Identify instances present in ALL sources that meet your root criteria
+    intersection_instances = (
+        df.filter(pl.col("root_lb").is_not_null() & pl.col("time").is_null())
+        .group_by("instance")
+        .agg(pl.col("source").n_unique().alias("source_count"))
+        # Only keep instances where the count of unique sources equals the total sources
+        .filter(pl.col("source_count") == num_sources)
+        .select("instance")
+    )
+
+    # 3. Filter the original dataframe using this intersection
+    df_root = df.join(intersection_instances, on="instance", how="inner")
+
+    # 4. Visualize
+    altair_accu(
+        compute_ratio(df_root, "root_time"), x_axis="ratio", max_x=1000
+    ).interactive().properties(
+        title="Performance Profile of the Time to Solve the Root"
+    )
+    return (all_sources,)
 
 
 @app.cell(hide_code=True)
@@ -773,68 +738,313 @@ def _(compare_instance, df, instance_detail, mo, out_source1, out_source2):
 
 
 @app.cell
-def _():
+def _(df, meta, pl):
+    # merge dataframe and meta based on instance
+    merged_df = df.join(meta, on="instance", how="inner")
+
+    merged_df = merged_df.filter(
+        pl.col("time").max().over("instance") > 5
+    ).unique()
+    return (merged_df,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Heatmaps
+
+    São grandes e não dão muita informação...
+    """)
     return
 
 
-@app.cell
-def _(mo):
-    mo.md(r"""
- 
-    """)
+@app.cell(hide_code=True)
+def _(alt, merged_df):
+    def create_heatmap(df, x_feat, y_feat, title):
+        return (
+            alt.Chart(df)
+            .mark_rect()
+            .encode(
+                alt.X(f"{x_feat}:Q", bin=alt.Bin(maxbins=40)),
+                alt.Y(f"{y_feat}:Q", bin=alt.Bin(maxbins=40)),
+                alt.Color(
+                    "count():Q",
+                ),
+            )
+            .properties(width=500, height=350, title=title)
+        )
+
+
+    _chart1 = create_heatmap(
+        merged_df,
+        "algebraic_connectivity",
+        "energy",
+        "Fraction Solved: Connectivity vs Energy",
+    )
+    _chart2 = create_heatmap(
+        merged_df, "energy", "density", "Fraction Solved: Energy vs Density"
+    )
+    _chart3 = create_heatmap(
+        merged_df,
+        "density",
+        "algebraic_connectivity",
+        "Fraction Solved: Density vs Connectivity",
+    )
+    # _chart1 | _chart2 | _chart3
+    return
+
+
+@app.cell(hide_code=True)
+def _(alt, merged_df):
+    # 1. Group by the unique instance identifiers
+    # 2. Sort by 'time' within each group and take the first (the minimum)
+    winners_df = (
+        merged_df.sort(
+            "time"
+        )  # Ensure the lowest time is at the top of each group
+        .group_by(["algebraic_connectivity", "energy", "density"])
+        .first()  # Grabs the row with the lowest time for each group
+    )
+
+
+    # Now winners_df contains one row per instance,
+    # with a column 'source' representing the winner.
+    def create_winner_map(df, x_feat, y_feat, title):
+        return (
+            alt.Chart(df)
+            .mark_rect()
+            .encode(
+                alt.X(f"{x_feat}:Q", bin=alt.Bin(maxbins=40)),
+                alt.Y(f"{y_feat}:Q", bin=alt.Bin(maxbins=40)),
+                # Color by source; Altair will pick the source
+                # that has the highest frequency in that bin
+                alt.Color(
+                    "source:N",
+                    scale=alt.Scale(scheme="category10"),
+                    title="Winning Source",
+                ),
+                # Opacity shows how many total 'wins' happened in that bin
+                alt.Opacity("count():Q", legend=alt.Legend(title="Win Density")),
+            )
+            .properties(width=500, height=350, title=title)
+        )
+
+
+    # Generate the three charts
+    chart1 = create_winner_map(
+        winners_df,
+        "algebraic_connectivity",
+        "energy",
+        "Best Source: Connectivity vs Energy",
+    )
+    chart2 = create_winner_map(
+        winners_df, "energy", "density", "Best Source: Energy vs Density"
+    )
+    chart3 = create_winner_map(
+        winners_df,
+        "density",
+        "algebraic_connectivity",
+        "Best Source: Density vs Connectivity",
+    )
+
+    # (chart1 | chart2 | chart3)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### `flat_300_28_0`
-
-    ```
-    2839   │ ( 184.446s)       utils.hpp:51    INFO| .   .   .   0.457846 s: MWISheuristic
-    2840   │ ( 292.408s)       utils.hpp:49    INFO| .   .   .   107.960207 s: branch_reduce -> 292 sets, alpha = 1.19751
-    2841   │ ( 292.836s)      solver.cpp:212   INFO| .   .   .   0.419250 s: GRB_optimize  -> 27.978095 | 6061 sets
-    2842   │ ( 292.843s)       utils.hpp:49    INFO| .   .   .   0.001075 s: MWISheuristic -> weighted = 1.02984
-    2843   │ ( 292.898s)      solver.cpp:212   INFO| .   .   .   0.053140 s: GRB_optimize  -> 27.977151 | 6062 sets
-    2844   │ ( 292.905s)       utils.hpp:49    INFO| .   .   .   0.001414 s: MWISheuristic -> weighted = 1.0089
-    2845   │ ( 292.927s)      solver.cpp:212   INFO| .   .   .   0.020694 s: GRB_optimize  -> 27.977101 | 6063 sets
-    2846   │ ( 292.934s)       utils.hpp:49    INFO| .   .   .   0.001060 s: MWISheuristic -> weighted = 1.06442
-    2847   │ ( 293.010s)      solver.cpp:212   INFO| .   .   .   0.074974 s: GRB_optimize  -> 27.972247 | 6064 sets
-    2848   │ ( 293.017s)       utils.hpp:49    INFO| .   .   .   0.001105 s: MWISheuristic -> weighted = 1.03891
-    2849   │ ( 293.072s)      solver.cpp:212   INFO| .   .   .   0.054600 s: GRB_optimize  -> 27.970979 | 6065 sets
-    2850   │ ( 293.080s)       utils.hpp:49    INFO| .   .   .   0.001682 s: MWISheuristic -> weighted = 1.07412
-    2851   │ ( 293.171s)      solver.cpp:212   INFO| .   .   .   0.090111 s: GRB_optimize  -> 27.965069 | 6066 sets
-    2852   │ ( 293.178s)       utils.hpp:49    INFO| .   .   .   0.001054 s: MWISheuristic -> weighted = 1.00662
-    2853   │ ( 293.215s)      solver.cpp:212   INFO| .   .   .   0.036109 s: GRB_optimize  -> 27.964815 | 6067 sets
-    2854   │ ( 293.677s)       utils.hpp:51    INFO| .   .   .   0.454566 s: MWISheuristic
-    2855   │ ( 436.290s)       utils.hpp:49    INFO| .   .   .   142.612261 s: branch_reduce -> 271 sets, alpha = 1.11356
-    2856   │ ( 436.296s)      solver.cpp:297   WARN| .   .   .   New (safe) LB[ 26 , 40 ]
-    2857   │ ( 436.780s)      solver.cpp:212   INFO| .   .   .   0.477580 s: GRB_optimize  -> 27.791079 | 6338 sets
-    2858   │ ( 436.790s)       utils.hpp:51    INFO| .   .   .   0.003106 s: MWISheuristic
-    2859   │ ( 485.714s)      solver.cpp:47     ERR| .   .   .   Stopping to preserve memory
-    2860   │ ( 485.714s)      loguru.cpp:637   INFO| .   .   .   atexit
-    ```
+    ## Time and Count of Function Histograms
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Separação
+def _(all_sources, df, mo, np, pl):
+    # select one source to analyze (by default, one that starts with "primal_")
+    _all_sources = df.select(pl.col("source").unique()).to_series().to_list()
+    _default_source = [s for s in all_sources if s.startswith("primal_")][0]
 
-    Aqui estão as instâncias que utilizaram a separação de alguma forma:
-    """)
-    return
+    source_histogram = mo.ui.radio(
+        all_sources,
+        label="Select source to analyze:",
+        value=_default_source,
+    )
+
+    histo_time_cutoff = mo.ui.slider(
+        # num=6 ensures we only get 0.01, 0.1, 1, 10, 100, 1000
+        steps=np.logspace(start=-2, stop=3, num=6, base=10),
+        value=0.1,
+        show_value=True,
+        label="Time cutoff for histogram:",
+    )
+
+    mo.hstack([source_histogram, histo_time_cutoff])
+    return histo_time_cutoff, source_histogram
+
+
+@app.cell(hide_code=True)
+def _(df, histo_time_cutoff, pl, source_histogram):
+    _df = df.filter(
+        (pl.col("time").max().over("instance") > histo_time_cutoff.value)
+        & (pl.col("source").eq(source_histogram.value))
+        & (pl.col("count_Expand").le(1))
+    ).unique()
+
+    # if the number of instances is greater than 1000, sample 1000 instances randomly
+    if len(_df) > 1000:
+        _df = _df.sample(n=1000, seed=42)
+
+    print(f"Analyzing {len(_df)} instances after filtering and sampling.")
+
+    # ---------------------------------------------------------
+    # 2. Dynamically extract function names
+
+    # Extract the function names by stripping out the "time_" prefix
+    # Find all columns starting with "time_"
+    time_cols = [col for col in _df.columns if col.startswith("time_")]
+    all_functions = [col.replace("time_", "") for col in time_cols]
+
+    valid_functions = []
+    for func in all_functions:
+        # if the column "time_{func}" is str, transform it to float
+        if _df[f"time_{func}"].dtype == pl.Utf8:
+            _df = _df.with_columns(
+                pl.col(f"time_{func}").str.replace(",", ".").cast(pl.Float64)
+            )
+        # Calculate the average percentage of total time across all instances
+        avg_pct = _df.select(
+            (pl.col(f"time_{func}") / pl.col("time")).mean()
+        ).item()
+
+        # Keep only functions between 1% (0.01) and 99% (0.99)
+        if avg_pct and 0.01 <= avg_pct <= 0.99:
+            valid_functions.append(func)
+
+    # ---------------------------------------------------------
+    # 3. Calculate Percentages and Prepare Data
+    # ---------------------------------------------------------
+    # Use ONLY the valid functions moving forward
+    pct_exprs = [
+        (pl.col(f"time_{func}") / pl.col("time")).alias(func)
+        for func in valid_functions
+    ]
+
+    # Create the Time Long dataframe
+    # Optimization: Select ONLY the columns needed for the chart immediately
+    df_time_long = (
+        _df.select([pl.col("instance")] + pct_exprs)
+        .unpivot(
+            index="instance",
+            variable_name="function",
+            value_name="time_percentage",
+        )
+        # Drop 'instance' if you don't use it for tooltips or selection to save space
+        .select(["function", "time_percentage"])
+    )
+
+
+    count_exprs = [pl.col(f"count_{func}").alias(func) for func in valid_functions]
+
+    # Create the Count Long dataframe
+    df_count_long = (
+        _df.select([pl.col("instance")] + count_exprs)
+        .unpivot(
+            index="instance", variable_name="function", value_name="call_count"
+        )
+        .select(["function", "call_count"])
+    )
+
+    df_count_long
+    return df_count_long, df_time_long
 
 
 @app.cell
-def _(df, pl):
-    # instances where "count_Expand" > 1
-    separation_instances = df.filter(pl.col("count_Expand") > 1)[
-        "instance"
-    ].unique()
-    df.filter(pl.col("count_Expand") > 1)
+def _(df_count_long, df_time_long, pl):
+    # 1. Aggregate the mean values
+    summary_df = (
+        df_time_long.group_by("function")
+        .agg(pl.col("time_percentage").mean())
+        .join(
+            df_count_long.group_by("function").agg(pl.col("call_count").mean()),
+            on="function",
+        )
+    )
+
+    # 2. Reformat columns to strings using your specific format patterns
+    summary_df = (
+        summary_df.with_columns(
+            [
+                pl.col("time_percentage")
+                .map_elements(lambda x: f"{x:.2%}", return_dtype=pl.String)
+                .alias("Avg Time %"),
+                pl.col("call_count")
+                .map_elements(lambda x: f"{x:.2}", return_dtype=pl.String)
+                .alias("Avg Call Count"),
+            ]
+        )
+        .sort("time_percentage")
+        .select(["function", "Avg Time %", "Avg Call Count"])
+    )
+
+    summary_df
+    return
+
+
+@app.cell(hide_code=True)
+def _(alt, df_count_long, df_time_long):
+    # --- TIME PERCENTAGE CHART ---
+    base_time = alt.Chart(df_time_long)
+
+    time_bars = base_time.mark_bar().encode(
+        x=alt.X(
+            "time_percentage:Q",
+            bin=alt.Bin(maxbins=20),
+            title="",
+            axis=alt.Axis(format="%"),
+        ),
+        y=alt.Y("count():Q", title="Number of Instances"),
+        color=alt.Color("function:N", legend=None),
+    )
+
+    time_mean_line = base_time.mark_rule(
+        color="red", strokeDash=[5, 5], strokeWidth=2
+    ).encode(x=alt.X("mean(time_percentage):Q"))
+
+    time_hist = (
+        alt.layer(time_bars, time_mean_line)
+        .properties(width=250, height=200)
+        .facet(column=alt.Column("function:N", title="Function"))
+    )
+
+    # --- CALL COUNT CHART ---
+    base_count = alt.Chart(df_count_long)
+
+    # 1. The Histogram
+    count_bars = base_count.mark_bar().encode(
+        x=alt.X("call_count:Q", bin=alt.Bin(maxbins=20), title=""),
+        y=alt.Y("count():Q", title="Number of Instances"),
+        color=alt.Color("function:N", legend=None),
+    )
+
+    # 2. The Average Line
+    count_mean_line = base_count.mark_rule(
+        color="red", strokeDash=[5, 5], strokeWidth=2
+    ).encode(x=alt.X("mean(call_count):Q"))
+
+    # 3. Layer and Facet
+    count_hist = (
+        alt.layer(count_bars, count_mean_line)
+        .properties(width=250, height=250)
+        .facet(column=alt.Column("function:N", title="Function"))
+        .resolve_scale(x="independent")
+    )
+
+    final_chart = alt.vconcat(time_hist, count_hist).resolve_scale(
+        color="independent"
+    )
+
+    final_chart
     return
 
 
@@ -843,24 +1053,19 @@ def _():
     return
 
 
-@app.cell
-def _():
-    return
-
-
-@app.cell(column=1, hide_code=True)
+@app.cell(hide_code=True)
 def _(pl):
     meta = (
         pl.read_csv("~/proj/color/inst/metadata.csv")
         .drop(
             [
-                "algebraic_connectivity",
-                "energy",
-                "matilda_maxis",
-                "matilda_dsatur",
+                # "algebraic_connectivity",
+                # "energy",
+                # "matilda_maxis",
+                # "matilda_dsatur",
                 "source",
-                "components",
-                "components_complement",
+                # "components",
+                # "components_complement",
             ]
         )
         # drop lines where the "instance" starts with "g"
@@ -868,31 +1073,36 @@ def _(pl):
         # add a column "solved" = pl.col("lb") == pl.col("ub")
         .with_columns((pl.col("lb") == pl.col("ub")).alias("solved"))
     )
-    meta
     return (meta,)
 
 
 @app.cell(hide_code=True)
-def _(Path, concat_dfs, get_df, get_exclusive_solved, meta, pl):
-    _df = concat_dfs(
-        [
-            get_df(f)
-            for f in [
-                Path("/Users/ieremies/proj/color/logs/new_held.csv"),
-                Path("/Users/ieremies/proj/color/logs/ordering.csv"),
-            ]
-        ]
-    )
-
+def _(Path, get_df, pl):
     matilda = (
-        get_df(Path("/Users/ieremies/proj/color/logs/new_held.csv"))
+        get_df(Path("/Users/ieremies/proj/color/logs/held.csv"))
         .select(pl.col("instance"))
         .unique()
     )
 
     with open("/Users/ieremies/proj/color/inst/some-matilda") as f:
-        some_matilda = pl.DataFrame({"instance": [str(line.strip()) for line in f.readlines()]})
+        some_matilda = pl.DataFrame(
+            {"instance": [str(line.strip()) for line in f.readlines()]}
+        )
         some_matilda = some_matilda.select(pl.col("instance")).unique()
+    return matilda, some_matilda
+
+
+@app.cell(hide_code=True)
+def _(Path, concat_dfs, get_df, meta, pl):
+    _df = concat_dfs(
+        [
+            get_df(f)
+            for f in [
+                Path("/Users/ieremies/proj/color/logs/held.csv"),
+                Path("/Users/ieremies/proj/color/logs/ordering.csv"),
+            ]
+        ]
+    )
 
     all = _df.select(pl.col("instance")).unique()
 
@@ -952,6 +1162,26 @@ def _(Path, concat_dfs, get_df, get_exclusive_solved, meta, pl):
             + instance_set_missing_ub["instance"].to_list()
             + instance_set_missing_frac_lb["instance"].to_list()
         )
+    )
+    return (
+        all,
+        instance_set_missing_both,
+        instance_set_missing_frac_lb,
+        instance_set_missing_ub,
+        instance_set_root,
+    )
+
+
+@app.cell(hide_code=True)
+def _(Path, concat_dfs, get_df, get_exclusive_solved, pl):
+    _df = concat_dfs(
+        [
+            get_df(f)
+            for f in [
+                Path("/Users/ieremies/proj/color/logs/held.csv"),
+                Path("/Users/ieremies/proj/color/logs/ordering.csv"),
+            ]
+        ]
     )
 
     # Instances solved by one but not the other
@@ -1017,7 +1247,6 @@ def _(Path, concat_dfs, get_df, get_exclusive_solved, meta, pl):
             ]
         )
     )
-    ordering_better_than_my_clique
 
     # Instances where "ordering" "root_obj" is faster than _my_df "first_clique"
     ordering_faster_than_my_clique = (
@@ -1047,62 +1276,14 @@ def _(Path, concat_dfs, get_df, get_exclusive_solved, meta, pl):
             ]
         )
     )
-    ordering_faster_than_my_clique
     return (
-        all,
-        instance_set_missing_both,
-        instance_set_missing_frac_lb,
-        instance_set_missing_ub,
-        instance_set_root,
-        matilda,
         ordering_better_root_lb,
         ordering_better_than_my_clique,
         ordering_faster_root_lb,
         ordering_faster_than_my_clique,
         solved_by_held,
         solved_by_ordering,
-        some_matilda,
     )
-
-
-@app.cell
-def _(
-    all,
-    instance_set_missing_both,
-    instance_set_missing_frac_lb,
-    instance_set_missing_ub,
-    instance_set_root,
-    matilda,
-    mo,
-    ordering_better_root_lb,
-    ordering_better_than_my_clique,
-    ordering_faster_root_lb,
-    ordering_faster_than_my_clique,
-    solved_by_held,
-    solved_by_ordering,
-    some_matilda,
-):
-    instance_filter = mo.ui.radio(
-        {
-            f"{len(all):>3} | all": all,
-            f"{len(instance_set_root):>3} | both root_ub and root_lb are optimal at root": instance_set_root,
-            f"{len(instance_set_missing_ub):>3} | frac chrom is the optimal, but UB is missing": instance_set_missing_ub,
-            f"{len(instance_set_missing_frac_lb):>3} | UB at root is the optimal, but LB is missing": instance_set_missing_frac_lb,
-            f"{len(instance_set_missing_both):>3} | both LB and UB are missing at root": instance_set_missing_both,
-            f"{len(solved_by_held):>3} | solved by held but not by ordering": solved_by_held,
-            f"{len(solved_by_ordering):>3} | solved by ordering but not by held": solved_by_ordering,
-            f"{len(ordering_better_root_lb):>3} | ordering has better root_lb than held": ordering_better_root_lb,
-            f"{len(ordering_faster_root_lb):>3} | ordering matches held root_lb but is faster": ordering_faster_root_lb,
-            f"{len(ordering_better_than_my_clique):>3} | ordering has better root_obj than my first_clique": ordering_better_than_my_clique,
-            f"{len(ordering_faster_than_my_clique):>3} | ordering matches my first_clique but is faster": ordering_faster_than_my_clique,
-            f"{len(matilda):>3} | instances in matilda": matilda,
-            f"{len(some_matilda):>3} | some matilda instances": some_matilda,
-        },
-        label="Select which set of instances to view:",
-        value=f"{len(all):>3} | all",
-    )
-    instance_filter
-    return (instance_filter,)
 
 
 @app.cell

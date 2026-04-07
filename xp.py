@@ -22,7 +22,7 @@ from src.config import load_config
 from src.console import out
 from src.parse import get_parser_command, parse_and_gather
 from src.run import RunInstance, Runner
-from src.utils import build_all, get_instances, get_project_root
+from src.utils import build_target, get_instances, get_project_root
 
 app = typer.Typer(help="XP CLI Application")
 
@@ -42,8 +42,6 @@ def run(
 
     # 2. Garante que a root do projeto existe (possivelmente clonando o repositório)
     get_project_root(config.project)
-    # 3. Para cada build, executa o comando de build
-    build_all(config.build, config.project)
     # 4. Garante que as instâncias existem (possivelmente clonando repositórios)
     # e garante que todas as instâncias da(s) classe(s) existem
     get_instances(config.instances)
@@ -60,6 +58,8 @@ def run(
     parser_cmd = get_parser_command(parser_script) if parser_script else None
 
     for build in config.build:
+        build_target(build, config.project)
+
         if config.instances.instances is None:
             continue
 
@@ -117,6 +117,100 @@ def plot(
         help="Arquivo de saída (o formato é deduzido automaticamente pela extensão).",
     ),
 ): ...
+
+
+@app.command()
+def summary(
+    logs_dir: str = Opt("logs/raw", help="Caminho para a pasta raw de logs."),
+):
+    import json
+    import re
+    from datetime import datetime
+
+    from rich import box
+    from rich.table import Table
+
+    raw_path = Path(logs_dir)
+    if not raw_path.exists() or not raw_path.is_dir():
+        out.error(f"Diretório de logs '{raw_path}' não encontrado.")
+        raise typer.Exit(1)
+
+    table = Table(title="XP Experiments Summary", show_lines=True, box=box.SIMPLE)
+    table.add_column("Date", style="cyan", no_wrap=True)
+    table.add_column("Relative", style="dim")
+    table.add_column("Build Name", style="magenta")
+    table.add_column("Instances", justify="right", style="green")
+    table.add_column("Time Limit", justify="right", style="yellow")
+
+    # Iterate through YYMMDD_HHMMSS directories in descending order
+    experiments = sorted([d for d in raw_path.iterdir() if d.is_dir()], reverse=True)
+
+    if not experiments:
+        out.print("Nenhum experimento encontrado.")
+        return
+
+    now = datetime.now()
+
+    def get_relative_time(dt: datetime) -> str:
+        diff = now - dt
+        days = diff.days
+        seconds = diff.seconds
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        if days > 0:
+            return f"{days} d atrás"
+        if hours > 0:
+            return f"{hours} h atrás"
+        if minutes > 0:
+            return f"{minutes} min atrás"
+        return "agora"
+
+    for exp_dir in experiments:
+        try:
+            exp_date = datetime.strptime(exp_dir.name, "%y%m%d_%H%M%S")
+            date_str = exp_date.strftime("%Y-%m-%d %H:%M:%S")
+            rel_str = get_relative_time(exp_date)
+        except ValueError:
+            # Ignore directories that don't match the expected date format
+            continue
+
+        builds = sorted([d for d in exp_dir.iterdir() if d.is_dir()])
+        if not builds:
+            table.add_row(date_str, rel_str, "[dim]vazio[/dim]", "-", "-")
+            continue
+
+        for i, build_dir in enumerate(builds):
+            # Count valid instances
+            instances = [
+                d
+                for d in build_dir.iterdir()
+                if d.is_dir() and (d / "meta.json").exists()
+            ]
+            n_instances = len(instances)
+
+            # Default time limit if not found
+            time_limit = "?"
+            if instances:
+                try:
+                    with (instances[0] / "meta.json").open("r") as f:
+                        meta = json.load(f)
+                        cmd = meta.get("command", "")
+                        # Parse "--kill-after=... 3600s" or similar
+                        # The timeout command ends with {self.time_limit}s
+                        match = re.search(r"kill-after=\d+\s+(\d+)s", cmd)
+                        if match:
+                            time_limit = f"{match.group(1)}s"
+                except Exception:
+                    pass
+
+            # Show date only for the first build of an experiment
+            show_date = date_str if i == 0 else ""
+            show_rel = rel_str if i == 0 else ""
+            table.add_row(
+                show_date, show_rel, build_dir.name, str(n_instances), time_limit
+            )
+
+    out.print(table)
 
 
 if __name__ == "__main__":

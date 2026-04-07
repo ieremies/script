@@ -82,9 +82,9 @@ def parse_gurobi_log(file_path):
     # 3. Root Relaxation Info
     match = re.search(patterns["root_relaxation"], content)
     if match:
-        data["root_obj"] = float(match.group(1))
+        data["root_lb"] = float(match.group(1))
         data["root_iterations"] = int(match.group(2))
-        data["root_time_seconds"] = float(match.group(3))
+        data["root_time"] = float(match.group(3))
 
     # 4. Search Progress (Nodes & Simplex Iterations)
     match = re.search(patterns["explored_nodes"], content)
@@ -99,6 +99,21 @@ def parse_gurobi_log(file_path):
         data["ub"] = float(match.group(1))
         data["lb"] = float(match.group(2))
         data["gap_percent"] = float(match.group(3))
+    else:
+        # Get what we can from lines as such:
+        #     Nodes    |    Current Node    |     Objective Bounds      |     Work
+        # │Expl Unexpl |  Obj  Depth IntInf | Incumbent    BestBd   Gap | It/Node Time
+        # 1135821 99311    6.00000   39   64    7.00000    6.00000  14.3%  33.6 3595s
+        last_line = content.splitlines()[-1]
+        parts = last_line.split()
+        if len(parts) >= 9:
+            try:
+                data["explored_nodes"] = int(parts[0])
+                data["ub"] = float(parts[5])
+                data["lb"] = float(parts[6])
+                data["gap_percent"] = float(parts[7].rstrip("%"))
+            except ValueError:
+                pass
 
     return data
 

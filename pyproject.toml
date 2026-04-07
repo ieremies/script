@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.12.4",
+    "pyomo>=6.10.0",
+    "pyscipopt>=6.1.0",
     "rich>=14.2.0",
     "toml>=0.10.2",
     "typer>=0.20.0",

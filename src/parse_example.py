@@ -209,12 +209,6 @@ def build_csv_row(directory_path, meta, general, times):
         "exit_code": meta.get("exit_code"),
     }
 
-    # Warn on failure
-    if row["exit_code"] is not None and row["exit_code"] != 0:
-        out.log(
-            f"[warning]Non-zero exit code ({row['exit_code']}) detected for instance {row['instance']}[/warning]"
-        )
-
     # Incorporate General Metrics
     row.update(
         {
@@ -241,7 +235,11 @@ def build_csv_row(directory_path, meta, general, times):
     else:
         # If no valid cost, invalidate time (as per original logic)
         row["time"] = None
-        if row["next_lb"] is not None and row["next_ub"] is not None:
+        if (
+            "next_lb" in row
+            and row["next_lb"] is not None
+            and row["next_ub"] is not None
+        ):
             row["lb"] = row["next_lb"]
             row["ub"] = row["next_ub"]
 
