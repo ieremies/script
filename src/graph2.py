@@ -1,18 +1,19 @@
+#!/Users/ieremies/.local/bin/uvx marimo edit
+
 import marimo
 
-__generated_with = "0.22.4"
-app = marimo.App(width="full")
+__generated_with = "0.23.1"
+app = marimo.App(width="medium")
 
 with app.setup(hide_code=True):
+    import operator
+    from functools import reduce
     from pathlib import Path
 
     import altair as alt
     import marimo as mo
     import numpy as np
     import polars as pl
-
-    from functools import reduce
-    import operator
 
     PROJECT_ROOT = Path("/Users/ieremies/proj/color")
 
@@ -31,14 +32,10 @@ def _():
 def _():
     _logs_root = PROJECT_ROOT / "logs"
     _lit_root = PROJECT_ROOT / "inst/lit"
-    _logs_dir = (
-        mo.watch.directory(_logs_root) if _logs_root.is_dir() else _logs_root
-    )
+    _logs_dir = mo.watch.directory(_logs_root) if _logs_root.is_dir() else _logs_root
     _lit_dir = mo.watch.directory(_lit_root) if _lit_root.is_dir() else _lit_root
     _csv_paths = get_csvs(_logs_dir)  # + get_csvs(_lit_dir)
-    csvs_files = {
-        f"/{n.relative_to(PROJECT_ROOT).as_posix()}": n for n in _csv_paths
-    }
+    csvs_files = {f"/{n.relative_to(PROJECT_ROOT).as_posix()}": n for n in _csv_paths}
 
     files = mo.ui.multiselect(
         csvs_files,
@@ -100,7 +97,7 @@ def _():
 
 @app.cell(hide_code=True)
 def _(df):
-    altair_accu(df, x_axis="time", max_x=3600.0).interactive().properties(
+    altair_accu(df, x_axis="time", max_x=7200.0).interactive().properties(
         title="Cumulative Time to Solve"
     ) | altair_accu(df, x_axis="gap", max_x=100).interactive().properties(
         title="Cumulative Gap"
@@ -118,9 +115,7 @@ def _():
 
 @app.cell(hide_code=True)
 def _(df):
-    altair_accu(
-        compute_ratio(df), x_axis="ratio", max_x=1000
-    ).interactive().properties(
+    altair_accu(compute_ratio(df), x_axis="ratio", max_x=1000).interactive().properties(
         title="Performance Profile of the Time to Solve"
     ) | altair_accu(
         compute_ratio(df, "gap"), x_axis="ratio", max_x=10
@@ -264,7 +259,6 @@ def _(df):
 def _(df, out_source1, out_source2, time_cutoff):
     mo.stop(out_source1.value == out_source2.value, "Comparing a soure to itself.")
 
-
     def _aux1(str1, str2):
         return mo.vstack(
             [
@@ -272,7 +266,6 @@ def _(df, out_source1, out_source2, time_cutoff):
                 get_exclusive_solved(df, str1, str2),
             ]
         )
-
 
     def _aux2(str1, str2):
         return mo.vstack(
@@ -283,7 +276,6 @@ def _(df, out_source1, out_source2, time_cutoff):
                 get_solved_with_time_factor(df, str1, str2, time_cutoff.value),
             ]
         )
-
 
     mo.vstack(
         [
@@ -368,7 +360,7 @@ def _(df, histo_time_cutoff, show_not_solved_switch, source_histogram):
 
     if show_not_solved_switch.value:
         # If True, allow BOTH times over the cutoff AND null times
-        time_condition = time_condition | pl.col("time").is_null()
+        time_condition = pl.col("time").is_null() | time_condition
 
     # 2. Apply the filter
     _df = df.filter(
@@ -401,9 +393,7 @@ def _(df, histo_time_cutoff, show_not_solved_switch, source_histogram):
                 pl.col(f"time_{func}").str.replace(",", ".").cast(pl.Float64)
             )
         # Calculate the average percentage of total time across all instances
-        avg_pct = _df.select(
-            (pl.col(f"time_{func}") / pl.col("time")).mean()
-        ).item()
+        avg_pct = _df.select((pl.col(f"time_{func}") / pl.col("time")).mean()).item()
 
         # Keep only functions between 1% (0.01) and 99% (0.99)
         if avg_pct and 0.01 <= avg_pct <= 0.99:
@@ -431,15 +421,12 @@ def _(df, histo_time_cutoff, show_not_solved_switch, source_histogram):
         .select(["function", "time_percentage"])
     )
 
-
     count_exprs = [pl.col(f"count_{func}").alias(func) for func in valid_functions]
 
     # Create the Count Long dataframe
     df_count_long = (
         _df.select([pl.col("instance")] + count_exprs)
-        .unpivot(
-            index="instance", variable_name="function", value_name="call_count"
-        )
+        .unpivot(index="instance", variable_name="function", value_name="call_count")
         .select(["function", "call_count"])
     )
     # 1. Create expressions for the time percentages, properly aliased
@@ -450,14 +437,11 @@ def _(df, histo_time_cutoff, show_not_solved_switch, source_histogram):
 
     # 2. Create expressions for the call counts, properly aliased
     _count_exprs = [
-        pl.col(f"count_{func}").alias(f"call_count_{func}")
-        for func in valid_functions
+        pl.col(f"count_{func}").alias(f"call_count_{func}") for func in valid_functions
     ]
 
     # 3. Build the final wide table in one pass
-    _df.select(
-        [pl.col("instance"), pl.col("time")] + _time_pct_exprs + _count_exprs
-    )
+    _df.select([pl.col("instance"), pl.col("time")] + _time_pct_exprs + _count_exprs)
     return df_count_long, df_time_long
 
 
@@ -510,9 +494,7 @@ def _(df_count_long, df_time_long):
         .resolve_scale(x="independent")
     )
 
-    final_chart = alt.vconcat(time_hist, count_hist).resolve_scale(
-        color="independent"
-    )
+    final_chart = alt.vconcat(time_hist, count_hist).resolve_scale(color="independent")
 
     final_chart
     return
@@ -526,12 +508,8 @@ def _():
 @app.function
 def compare_instance(df: pl.DataFrame, inst: str, src1: str, src2: str):
     # Filter and convert to dictionary
-    s1 = df.filter(
-        (pl.col("instance") == inst) & (pl.col("source") == src1)
-    ).to_dicts()
-    s2 = df.filter(
-        (pl.col("instance") == inst) & (pl.col("source") == src2)
-    ).to_dicts()
+    s1 = df.filter((pl.col("instance") == inst) & (pl.col("source") == src1)).to_dicts()
+    s2 = df.filter((pl.col("instance") == inst) & (pl.col("source") == src2)).to_dicts()
 
     if not s1 or not s2:
         return []
@@ -595,9 +573,7 @@ def get_solved_with_time_factor(
 
 
 @app.function
-def get_exclusive_solved(
-    df: pl.DataFrame, source1: str, source2: str
-) -> pl.DataFrame:
+def get_exclusive_solved(df: pl.DataFrame, source1: str, source2: str) -> pl.DataFrame:
     """
     Returns instances solved by source1 but not by source2.
     """
@@ -608,9 +584,7 @@ def get_exclusive_solved(
         [
             pl.col("instance"),
             pl.col("time").alias("time_s1"),
-            pl.col("ub").alias(
-                "value_s1"
-            ),  # Since lb == ub, ub is the final value
+            pl.col("ub").alias("value_s1"),  # Since lb == ub, ub is the final value
         ]
     )
 
@@ -626,9 +600,7 @@ def get_exclusive_solved(
     # 3. Join and filter for instances where source2 did NOT solve it
     return (
         s1_solved.join(s2_all, on="instance", how="left")
-        .filter(
-            (pl.col("lb_s2") != pl.col("ub_s2")) | pl.col("lb_s2").is_null()
-        )
+        .filter((pl.col("lb_s2") != pl.col("ub_s2")) | pl.col("lb_s2").is_null())
         .select(["instance", "time_s1", "value_s1", "lb_s2", "ub_s2"])
     ).rename(
         {
@@ -651,19 +623,14 @@ def alt_cumulative_relative_histogram(df: pl.DataFrame, base: str):
     # 2. Filter the result
     df_transformed = df.with_columns(
         ratio=pl.col("time")
-        / pl.col("time")
-        .filter(pl.col("source") == base)
-        .first()
-        .over("instance")
+        / pl.col("time").filter(pl.col("source") == base).first().over("instance")
     ).filter(pl.col("ratio") <= 1000)
 
     # Note: Altair works seamlessly with Polars DataFrames
     return (
         altair_accu(df_transformed, x_axis="ratio", max_x=1000)
         .interactive()
-        .properties(
-            title=f"Cumulative Relative Histogram of Time (base = {base})"
-        )
+        .properties(title=f"Cumulative Relative Histogram of Time (base = {base})")
     )
 
 
@@ -678,11 +645,7 @@ def get_stats(df: pl.DataFrame) -> dict:
         solved=pl.col("lb").eq(pl.col("ub")).sum(),
         total_time=pl.col("time").filter(pl.col("lb") == pl.col("ub")).sum(),
         geo_ave_time=(
-            pl.col("time")
-            .filter(pl.col("lb") == pl.col("ub"))
-            .log()
-            .mean()
-            .exp()
+            pl.col("time").filter(pl.col("lb") == pl.col("ub")).log().mean().exp()
         ),
     )
     _stats = stats_df.to_dict(as_series=False)
@@ -740,9 +703,7 @@ def altair_accu(
     )
 
     # === Define shared instance selection ===
-    highlight = alt.selection_point(
-        fields=["instance"], nearest=True, empty="all"
-    )
+    highlight = alt.selection_point(fields=["instance"], nearest=True, empty="all")
 
     # === Scale logic ===
     # Use fill_null/clip to handle log scale issues if necessary
@@ -773,9 +734,7 @@ def altair_accu(
     # === Points with highlighting ===
     points = (
         base.mark_point(size=50)
-        .encode(
-            opacity=alt.condition(highlight, alt.value(1.0), alt.value(0.2))
-        )
+        .encode(opacity=alt.condition(highlight, alt.value(1.0), alt.value(0.2)))
         .add_params(highlight)
     )
 
@@ -868,9 +827,7 @@ def concat_dfs(
     if instance_filter is not None:
         common_instances = common_instances.intersection(set(instance_filter))
 
-    filtered_dfs = [
-        d.filter(pl.col("instance").is_in(common_instances)) for d in dfs
-    ]
+    filtered_dfs = [d.filter(pl.col("instance").is_in(common_instances)) for d in dfs]
     return pl.concat(filtered_dfs, how="diagonal_relaxed").with_columns(
         pl.col(pl.Float64, pl.Float32).round(6)
     )
@@ -883,11 +840,9 @@ def _():
     _held = get_df(PROJECT_ROOT / "logs/held.csv")
     _ord = get_df(PROJECT_ROOT / "logs/ordering.csv")
 
-
     _metacsv = _metacsv.drop(
         [c for c in ["source", "gap"] if c in _metacsv.columns]
     ).rename({"lb": "known_lb", "ub": "known_ub"})
-
 
     _metacsv = _metacsv.with_columns(
         pl.when(
@@ -903,7 +858,7 @@ def _():
         _ord.select(
             pl.col("instance").alias("instance"),
             pl.col("root_lb").ceil().alias("ord_root"),
-            pl.col("root_time_seconds").alias("ord_root_time"),
+            pl.col("root_time").alias("ord_root_time"),
             (pl.col("gap") == 0).alias("ord_solved"),
         ),
         on="instance",
@@ -928,10 +883,7 @@ def _():
 @app.cell
 def _():
     _some_matilda_inst = (
-        Path(PROJECT_ROOT / "inst/some-matilda")
-        .expanduser()
-        .read_text()
-        .splitlines()
+        Path(PROJECT_ROOT / "inst/some-matilda").expanduser().read_text().splitlines()
     )
 
     filters = {
